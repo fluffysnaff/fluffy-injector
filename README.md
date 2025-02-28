@@ -2,22 +2,17 @@
 Fluffy Injector is a **Rust-based DLL injector** with an **egui**-powered GUI, allowing easy injection of DLLs into running processes. The interface is user-friendly, and the injection process is seamless.
 
 <p align="center">
-  <img src="assets/logo.png" alt="Fluffy Injector Logo">
+  <img src="assets/icon.png" alt="Fluffy Injector Logo">
 </p>
 
 ## 🚀 Features
 ### 📂 Process & DLL Management:
 - **List running processes** (Name & PID)
 - **Search for processes**
-- **Select a process for injection**
-- **Display loaded DLLs**
-- **Add DLLs to inject**
-- **Remove selected DLLs**
 
 ### ⚡ Injection:
 - **Inject a DLL into a selected process**
 - **Uses `CreateRemoteThread` & `LoadLibraryA`**
-- **Works on Windows**
 
 ### 🎨 User Interface:
 - **Sleek dark mode UI**
