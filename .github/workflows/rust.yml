@@ -30,5 +30,4 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: release-build
-          # Adjust the path below to match your executable output file.
-          path: target/release/fluffy_injector.exe
+          path: target/release/injector.exe
