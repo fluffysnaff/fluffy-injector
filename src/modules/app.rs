@@ -1,6 +1,5 @@
 use crate::modules::config::Config;
-use crate::modules::dll::{DLLManager, select_dll};
-use crate::modules::icon;
+use crate::modules::dll::DLLManager;
 use crate::modules::injector::inject_dll;
 use crate::modules::process::{ProcessInfo, get_processes};
 use eframe::egui::{self, Color32, Frame, Margin, RichText, Stroke, Vec2, Visuals};

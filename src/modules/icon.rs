@@ -34,10 +34,14 @@ pub fn load_exe_icon(ctx: &Context, exe_path: &Path) -> Option<TextureHandle> {
             color_image,
             TextureOptions::default(),
         );
-        unsafe { DestroyIcon(hicon_small) };
+        unsafe {
+            let _ = DestroyIcon(hicon_small);
+        };
         return Some(tex);
     }
-    unsafe { DestroyIcon(hicon_small) };
+    unsafe {
+        let _ = DestroyIcon(hicon_small);
+    };
     None
 }
 
