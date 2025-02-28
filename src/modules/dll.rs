@@ -17,6 +17,20 @@ impl DLLManager {
         self.dlls.push(path);
     }
 
+    pub fn remove(&mut self, index: usize) {
+        if index < self.dlls.len() {
+            self.dlls.remove(index);
+            // Adjust the selected index if needed.
+            if let Some(selected) = self.selected {
+                if selected == index {
+                    self.selected = None;
+                } else if selected > index {
+                    self.selected = Some(selected - 1);
+                }
+            }
+        }
+    }
+
     pub fn get_dlls(&self) -> &Vec<String> {
         &self.dlls
     }

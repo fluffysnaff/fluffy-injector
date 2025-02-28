@@ -259,9 +259,14 @@ impl eframe::App for InjectorApp {
                                     .clicked()
                                 {
                                     if let Some(path) = crate::modules::dll::select_dll() {
-                                        self.dll_manager.add(path.clone());
-                                        self.config.dlls.push(path);
-                                        let _ = self.config.save();
+                                        if self.dll_manager.get_dlls().contains(&path) {
+                                            self.injection_message =
+                                                Some("❌ DLL already added.".to_string());
+                                        } else {
+                                            self.dll_manager.add(path.clone());
+                                            self.config.dlls.push(path);
+                                            let _ = self.config.save();
+                                        }
                                     }
                                 }
 
@@ -289,6 +294,26 @@ impl eframe::App for InjectorApp {
                                     } else {
                                         self.injection_message =
                                             Some("❌ Select a process first.".to_string());
+                                    }
+                                }
+                                if ui
+                                    .add(
+                                        egui::Button::new("🗑 Remove File")
+                                            .fill(Color32::from_rgb(50, 50, 50))
+                                            .rounding(8.0)
+                                            .min_size(Vec2::new(100.0, 35.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    if let Some(selected_index) = self.dll_manager.selected_dll() {
+                                        self.dll_manager.remove(selected_index);
+                                        self.config.dlls.remove(selected_index);
+                                        let _ = self.config.save();
+                                        self.injection_message =
+                                            Some("✅ DLL removed.".to_string());
+                                    } else {
+                                        self.injection_message =
+                                            Some("❌ No DLL selected to remove.".to_string());
                                     }
                                 }
                             });
