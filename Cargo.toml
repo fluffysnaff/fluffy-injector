@@ -20,6 +20,8 @@ windows = { version = "0.60.0", features = [
 winit = "0.28"
 image = "0.24"
 ico = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [build-dependencies]
 winres = "0.1.12"
