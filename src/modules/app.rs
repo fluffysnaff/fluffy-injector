@@ -2,7 +2,10 @@ use crate::modules::config::Config;
 use crate::modules::dll::DLLManager;
 use crate::modules::injector::inject_dll;
 use crate::modules::process::{ProcessInfo, get_processes};
-use eframe::egui::{self, Color32, Frame, Margin, RichText, Stroke, Vec2, Visuals};
+use eframe::egui::{
+    self, Color32, ColorImage, Frame, Margin, RichText, Stroke, TextureHandle, TextureOptions,
+    Vec2, Visuals,
+};
 use std::collections::HashMap;
 
 pub struct InjectorApp {
@@ -12,7 +15,8 @@ pub struct InjectorApp {
     injection_message: Option<String>,
     process_search: String,
     config: Config,
-    icon_cache: HashMap<u32, egui::TextureHandle>,
+    icon_cache: HashMap<u32, TextureHandle>,
+    default_dll_texture: Option<TextureHandle>,
 }
 
 impl InjectorApp {
@@ -52,12 +56,26 @@ impl Default for InjectorApp {
             process_search: String::new(),
             config,
             icon_cache: HashMap::new(),
+            default_dll_texture: None,
         }
     }
 }
 
 impl eframe::App for InjectorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Lazy-load the default DLL icon from a PNG file using icon_data.
+        if self.default_dll_texture.is_none() {
+            // Load the image using the image crate.
+            let dyn_img = image::load_from_memory(include_bytes!("../../assets/dll_icon.png"))
+                .expect("Failed to load default DLL icon");
+            // Resize the image to a smaller size (e.g. 12x16 pixels).
+            let resized = dyn_img.resize_exact(12, 16, image::imageops::FilterType::Lanczos3);
+            let rgba = resized.to_rgba8();
+            let default_img = ColorImage::from_rgba_unmultiplied([12, 16], rgba.as_raw());
+            self.default_dll_texture =
+                Some(ctx.load_texture("dll_default", default_img, TextureOptions::default()));
+        }
+
         ctx.set_visuals(Visuals::dark());
 
         egui::TopBottomPanel::top("selected_info_panel")
@@ -149,7 +167,7 @@ impl eframe::App for InjectorApp {
                                             continue;
                                         }
                                         ui.horizontal(|ui| {
-                                            // Render the icon if available.
+                                            // Render the process icon if available.
                                             if let Some(tex) = self.icon_cache.get(&proc.pid) {
                                                 ui.allocate_ui(Vec2::new(16.0, 16.0), |ui| {
                                                     ui.add(egui::Image::new(tex));
@@ -203,12 +221,23 @@ impl eframe::App for InjectorApp {
                                     let mut selected_idx = self.dll_manager.selected_dll();
 
                                     for (i, dll) in dlls.iter().enumerate() {
-                                        if ui
-                                            .selectable_label(Some(i) == selected_idx, dll)
-                                            .clicked()
-                                        {
-                                            selected_idx = Some(i);
-                                        }
+                                        ui.horizontal(|ui| {
+                                            // Always render the default DLL icon.
+                                            if let Some(default_tex) = &self.default_dll_texture {
+                                                ui.allocate_ui(Vec2::new(16.0, 16.0), |ui| {
+                                                    ui.add(egui::Image::new(default_tex));
+                                                });
+                                            } else {
+                                                ui.label("❔");
+                                            }
+                                            // Render the DLL path as a selectable label.
+                                            if ui
+                                                .selectable_label(Some(i) == selected_idx, dll)
+                                                .clicked()
+                                            {
+                                                selected_idx = Some(i);
+                                            }
+                                        });
                                     }
                                     if let Some(i) = selected_idx {
                                         self.dll_manager.select(i);
