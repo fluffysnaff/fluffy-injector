@@ -53,17 +53,6 @@ Fluffy Injector uses:
 ## 🤝 Contributions
 Contributions are welcome! If you have improvements, bug fixes, or feature requests, feel free to submit a pull request.
 
-### 🔄 Updating Instructions
-1. Ensure you have Rust installed.
-2. Pull the latest changes from the repo:
-   ```bash
-   git pull origin main
-   ```
-3. Rebuild the project:
-   ```bash
-   cargo build --release
-   ```
-
 ## ⭐ Star the Repo!
 If you find this project useful, **drop a star** on GitHub to support development!
 
