@@ -27,7 +27,7 @@ jobs:
         run: cargo build --release --verbose
 
       - name: Upload Release Build
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v3.1.2
         with:
           name: release-build
           path: target/release/injector.exe
