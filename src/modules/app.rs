@@ -1,16 +1,19 @@
 use crate::modules::config::Config;
 use crate::modules::dll::{DLLManager, select_dll};
+use crate::modules::icon;
 use crate::modules::injector::inject_dll;
-use crate::modules::process::get_processes;
+use crate::modules::process::{ProcessInfo, get_processes};
 use eframe::egui::{self, Color32, Frame, Margin, RichText, Stroke, Vec2, Visuals};
+use std::collections::HashMap;
 
 pub struct InjectorApp {
-    processes: Vec<(String, u32)>,
+    processes: Vec<ProcessInfo>,
     selected_process: Option<u32>,
     dll_manager: DLLManager,
     injection_message: Option<String>,
     process_search: String,
     config: Config,
+    icon_cache: HashMap<u32, egui::TextureHandle>,
 }
 
 impl InjectorApp {
@@ -18,29 +21,26 @@ impl InjectorApp {
         self.selected_process.and_then(|pid| {
             self.processes
                 .iter()
-                .find(|(_, p)| *p == pid)
-                .map(|(name, _)| name.as_str())
+                .find(|p| p.pid == pid)
+                .map(|p| p.name.as_str())
         })
     }
 }
 
 impl Default for InjectorApp {
     fn default() -> Self {
-        // Load configuration from file
         let config = Config::load();
         let processes = get_processes();
-        // If there is a last selected app, try to find its PID in the current process list
         let selected_process = if let Some(ref last_app) = config.last_selected_app {
             processes
                 .iter()
-                .find(|(name, _)| name == last_app)
-                .map(|(_, pid)| *pid)
+                .find(|p| p.name == *last_app)
+                .map(|p| p.pid)
         } else {
             None
         };
 
         let mut dll_manager = DLLManager::new();
-        // Load saved DLL paths from the configuration into the DLL manager
         for dll in &config.dlls {
             dll_manager.add(dll.clone());
         }
@@ -52,16 +52,15 @@ impl Default for InjectorApp {
             injection_message: None,
             process_search: String::new(),
             config,
+            icon_cache: HashMap::new(),
         }
     }
 }
 
 impl eframe::App for InjectorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Apply a custom dark mode theme
         ctx.set_visuals(Visuals::dark());
 
-        // Top Panel: Display current selections
         egui::TopBottomPanel::top("selected_info_panel")
             .frame(
                 Frame::default()
@@ -104,7 +103,6 @@ impl eframe::App for InjectorApp {
                 });
             });
 
-        // Central Panel: Processes and DLL list
         egui::CentralPanel::default()
             .frame(
                 Frame::default()
@@ -129,13 +127,12 @@ impl eframe::App for InjectorApp {
                             ui.add_space(5.0);
 
                             if ui.button("🔄 Refresh").clicked() {
-                                self.processes = get_processes();
-                                // If there's a saved last selected app, try to auto-select it again
+                                self.processes = crate::modules::process::get_processes();
                                 if let Some(ref last_app) = self.config.last_selected_app {
-                                    if let Some((_, pid)) =
-                                        self.processes.iter().find(|(name, _)| name == last_app)
+                                    if let Some(proc) =
+                                        self.processes.iter().find(|p| p.name == *last_app)
                                     {
-                                        self.selected_process = Some(*pid);
+                                        self.selected_process = Some(proc.pid);
                                     }
                                 }
                             }
@@ -146,30 +143,47 @@ impl eframe::App for InjectorApp {
                                 .id_source("process_list")
                                 .show(ui, |ui| {
                                     let search_lower = self.process_search.to_lowercase();
-                                    for (name, pid) in &self.processes {
+                                    for proc in &self.processes {
                                         if !self.process_search.is_empty()
-                                            && !name.to_lowercase().contains(&search_lower)
+                                            && !proc.name.to_lowercase().contains(&search_lower)
                                         {
                                             continue;
                                         }
-                                        if ui
-                                            .selectable_label(
-                                                Some(*pid) == self.selected_process,
-                                                format!("{name} ({pid})"),
-                                            )
-                                            .clicked()
-                                        {
-                                            self.selected_process = Some(*pid);
-                                            // Save the selected process name in config and persist
-                                            self.config.last_selected_app = Some(name.clone());
-                                            let _ = self.config.save();
-                                        }
+                                        ui.horizontal(|ui| {
+                                            // Render the icon if available.
+                                            if let Some(tex) = self.icon_cache.get(&proc.pid) {
+                                                ui.allocate_ui(Vec2::new(16.0, 16.0), |ui| {
+                                                    ui.add(egui::Image::new(tex));
+                                                });
+                                            } else if let Some(tex) =
+                                                crate::modules::icon::load_exe_icon(ctx, &proc.exe)
+                                            {
+                                                self.icon_cache.insert(proc.pid, tex.clone());
+                                                ui.allocate_ui(Vec2::new(16.0, 16.0), |ui| {
+                                                    ui.add(egui::Image::new(&tex));
+                                                });
+                                            } else {
+                                                ui.label("❔");
+                                            }
+                                            if ui
+                                                .selectable_label(
+                                                    Some(proc.pid) == self.selected_process,
+                                                    format!("{} ({})", proc.name, proc.pid),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.selected_process = Some(proc.pid);
+                                                self.config.last_selected_app =
+                                                    Some(proc.name.clone());
+                                                let _ = self.config.save();
+                                            }
+                                        });
                                     }
                                 });
                         });
                     });
 
-                    // Right Panel: DLL list and buttons
+                    // Right Panel: DLL list & Buttons
                     ui.allocate_ui(Vec2::new(right_width, total_height), |ui| {
                         ui.vertical(|ui| {
                             ui.add_space(10.0);
@@ -216,7 +230,7 @@ impl eframe::App for InjectorApp {
                                     )
                                     .clicked()
                                 {
-                                    if let Some(path) = select_dll() {
+                                    if let Some(path) = crate::modules::dll::select_dll() {
                                         self.dll_manager.add(path.clone());
                                         self.config.dlls.push(path);
                                         let _ = self.config.save();
