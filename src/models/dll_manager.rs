@@ -1,5 +1,4 @@
-use rfd::FileDialog;
-
+#[derive(Default)]
 pub struct DLLManager {
     dlls: Vec<String>,
     selected: Option<usize>,
@@ -7,10 +6,7 @@ pub struct DLLManager {
 
 impl DLLManager {
     pub fn new() -> Self {
-        Self {
-            dlls: vec![],
-            selected: None,
-        }
+        Self::default()
     }
 
     pub fn add(&mut self, path: String) {
@@ -20,12 +16,11 @@ impl DLLManager {
     pub fn remove(&mut self, index: usize) {
         if index < self.dlls.len() {
             self.dlls.remove(index);
-            // Adjust the selected index if needed.
-            if let Some(selected) = self.selected {
-                if selected == index {
+            if let Some(selected_idx) = self.selected {
+                if selected_idx == index {
                     self.selected = None;
-                } else if selected > index {
-                    self.selected = Some(selected - 1);
+                } else if selected_idx > index {
+                    self.selected = Some(selected_idx - 1);
                 }
             }
         }
@@ -35,8 +30,8 @@ impl DLLManager {
         &self.dlls
     }
 
-    pub fn select(&mut self, index: usize) {
-        self.selected = Some(index);
+    pub fn select(&mut self, index: Option<usize>) {
+        self.selected = index;
     }
 
     pub fn selected_dll(&self) -> Option<usize> {
@@ -46,11 +41,4 @@ impl DLLManager {
     pub fn selected_path(&self) -> Option<String> {
         self.selected.map(|i| self.dlls[i].clone())
     }
-}
-
-pub fn select_dll() -> Option<String> {
-    FileDialog::new()
-        .add_filter("DLL Files", &["dll"])
-        .pick_file()
-        .map(|p| p.to_string_lossy().into_owned())
 }
