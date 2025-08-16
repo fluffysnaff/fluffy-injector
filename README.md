@@ -6,6 +6,8 @@
   </a>
 </p>
 
+**A modern, open-source `Rust DLL injector` for Windows, featuring a sleek `egui GUI` and powerful process management capabilities. Find more projects at [fluffysnaff.xyz](https://fluffysnaff.xyz) and on MY [GitHub](https://github.com/fluffysnaff).**
+
 <p align="center">
     <a href="https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml"><img src="https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml/badge.svg" alt="Build Status"></a>
     <a href="https://github.com/fluffysnaff/fluffy-injector/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
@@ -13,7 +15,7 @@
     <img src="https://img.shields.io/badge/Platform-Windows-0078D6.svg" alt="Platform: Windows">
 </p>
 
-**A modern, open-source `Rust DLL injector` for Windows, featuring a sleek `egui GUI` and powerful process management capabilities. Find more projects at [fluffysnaff.xyz](https://fluffysnaff.xyz) and on MY [GitHub](https://github.com/fluffysnaff).**
+---
 
 > ⚠️ **Disclaimer: For Educational Use Only**
 >
@@ -115,3 +117,9 @@ Contributions are welcome! Whether you have ideas for new features, bug fixes, o
 ## 📜 License
 
 This project is licensed under the **MIT License**. See the [LICENSE](https://github.com/fluffysnaff/fluffy-injector/blob/main/LICENSE) file for full details.
+
+---
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=fluffysnaff/fluffy-injector&type=Date)](https://www.star-history.com/#fluffysnaff/fluffy-injector&Date)
