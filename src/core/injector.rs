@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use windows::{
     core::PCSTR,
     Win32::System::Diagnostics::Debug::WriteProcessMemory,
@@ -32,7 +32,12 @@ fn create_injection_copy(process_id: u32, source: &Path) -> Result<PathBuf> {
 
     let dir = std::env::temp_dir().join("fluffy-injector");
     std::fs::create_dir_all(&dir).context("Failed to create temp DLL directory")?;
-    cleanup_stale_copies(&dir);
+    // Best-effort: locked (still-loaded) copies fail to delete and are left alone.
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 
     let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or("dll");
     let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("dll");
@@ -43,25 +48,6 @@ fn create_injection_copy(process_id: u32, source: &Path) -> Result<PathBuf> {
     let dest = dir.join(format!("{stem}-{process_id}-{id}.{ext}"));
     std::fs::copy(source, &dest).context("Failed to copy DLL for injection")?;
     Ok(dest)
-}
-
-fn cleanup_stale_copies(dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let max_age = Duration::from_secs(24 * 60 * 60);
-    for entry in entries.flatten() {
-        let stale = entry
-            .metadata()
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.elapsed().ok())
-            .is_some_and(|age| age >= max_age);
-        // Loaded DLLs stay locked on Windows; only unused copies are removed.
-        if stale {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
 }
 
 fn inject_dll_path(process_id: u32, dll_path: &str) -> Result<()> {
