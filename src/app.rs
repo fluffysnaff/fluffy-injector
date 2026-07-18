@@ -5,7 +5,7 @@ use crate::models::process::ProcessInfo;
 use crate::models::toast::{Toast, ToastLevel};
 use crate::ui;
 use eframe::egui::{ColorImage, Context, TextureHandle};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -39,8 +39,12 @@ impl InjectorApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let config = Config::load().unwrap_or_default();
         let mut dll_manager = DLLManager::new();
+        let selected_dlls: HashSet<&str> =
+            config.selected_dlls.iter().map(String::as_str).collect();
         for dll in &config.dlls {
+            let index = dll_manager.get_dlls().len();
             dll_manager.add(dll.clone());
+            dll_manager.set_selected(index, selected_dlls.contains(dll.as_str()));
         }
 
         let (background_tx, background_rx) = mpsc::channel();

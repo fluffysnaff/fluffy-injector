@@ -7,6 +7,8 @@ pub struct Config {
     pub dlls: Vec<String>,
     pub last_selected_app: Option<String>,
     #[serde(default)]
+    pub selected_dlls: Vec<String>,
+    #[serde(default)]
     pub copy_dll_on_inject: bool,
 }
 
@@ -32,9 +34,22 @@ mod tests {
     use super::Config;
 
     #[test]
-    fn missing_copy_setting_defaults_to_disabled() {
+    fn missing_new_settings_use_defaults() {
         let config: Config =
             serde_json::from_str(r#"{"dlls":[],"last_selected_app":null}"#).unwrap();
+        assert!(config.selected_dlls.is_empty());
         assert!(!config.copy_dll_on_inject);
+    }
+
+    #[test]
+    fn selected_dlls_round_trip() {
+        let config = Config {
+            selected_dlls: vec!["a.dll".into(), "b.dll".into()],
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: Config = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.selected_dlls, config.selected_dlls);
     }
 }
