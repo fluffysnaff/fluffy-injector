@@ -6,6 +6,8 @@ use std::path::Path;
 pub struct Config {
     pub dlls: Vec<String>,
     pub last_selected_app: Option<String>,
+    #[serde(default)]
+    pub copy_dll_on_inject: bool,
 }
 
 impl Config {
@@ -22,5 +24,17 @@ impl Config {
     pub fn save(&self) -> Result<()> {
         let data = serde_json::to_string_pretty(self).context("Failed to serialize config")?;
         std::fs::write("config.json", data).context("Failed to write config file")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    #[test]
+    fn missing_copy_setting_defaults_to_disabled() {
+        let config: Config =
+            serde_json::from_str(r#"{"dlls":[],"last_selected_app":null}"#).unwrap();
+        assert!(!config.copy_dll_on_inject);
     }
 }

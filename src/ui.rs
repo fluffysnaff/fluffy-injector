@@ -146,6 +146,17 @@ fn draw_dll_panel(ui: &mut egui::Ui, app: &mut InjectorApp) {
         ui.separator();
         ui.add_space(10.0);
 
+        if ui
+            .checkbox(&mut app.config.copy_dll_on_inject, "Copy on inject")
+            .on_hover_text("Keeps the original DLL free for rebuilding.")
+            .changed()
+        {
+            if let Err(e) = app.config.save() {
+                app.add_toast(ToastLevel::Error, format!("Failed to save config: {}", e));
+            }
+        }
+        ui.add_space(10.0);
+
         ui.horizontal(|ui| {
             let button_size = Vec2::new(100.0, 35.0);
             if ui.add(egui::Button::new("➕ Add DLL").min_size(button_size)).clicked() {
@@ -162,7 +173,7 @@ fn draw_dll_panel(ui: &mut egui::Ui, app: &mut InjectorApp) {
             let inject_enabled = app.selected_process.is_some() && app.dll_manager.selected_dll().is_some();
             if ui.add_enabled(inject_enabled, egui::Button::new("🚀 Inject DLL").min_size(button_size)).clicked() {
                 if let (Some(pid), Some(dll_path)) = (app.selected_process, app.dll_manager.selected_path()) {
-                    match injector::inject_dll(pid, &dll_path) {
+                    match injector::inject_dll(pid, &dll_path, app.config.copy_dll_on_inject) {
                         Ok(_) => app.add_toast(ToastLevel::Success, "Injection successful!"),
                         Err(e) => app.add_toast(ToastLevel::Error, format!("Injection failed: {}", e)),
                     }

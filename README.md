@@ -52,6 +52,7 @@ The goal is to make `DLL injection` accessible and straightforward without sacri
 *   **🔄 Auto-Refresh Option:** Keep the process list up-to-date automatically without manual refreshes.
 *   **📂 Easy DLL Management:** Add DLLs via a file dialog, manage them in a persistent list, and remove them when they're no longer needed.
 *   **🚀 One-Click Injection:** Injects the selected DLL into the target process using the reliable `CreateRemoteThread` and `LoadLibraryA` method.
+*   **📋 Copy on Inject:** Optionally inject a temporary DLL copy so the original build output remains free for rebuilding.
 *   **💾 Session Persistence:** Remembers your list of DLLs and the last selected application, so you can pick up right where you left off.
 *   **🎨 Modern Dark UI:** Built with Rust's immediate-mode `egui GUI` framework for a responsive, cross-platform feel.
 *   **🔔 Toast Notifications:** Get instant, non-intrusive feedback on injection success, warnings, or failures.
