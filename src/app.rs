@@ -9,6 +9,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
+const WINDOW_SAVE_DELAY: Duration = Duration::from_millis(500);
+
 pub enum BackgroundMessage {
     Processes(Vec<ProcessInfo>),
     Icon((u32, ColorImage)),
@@ -21,23 +23,21 @@ pub struct InjectorApp {
     pub dll_manager: DLLManager,
     pub config: Config,
     pub is_loading_processes: bool,
-    pub auto_refresh: bool,
     pub icon_cache: HashMap<u32, TextureHandle>,
     pub default_dll_texture: Option<TextureHandle>,
     pub toasts: Vec<Toast>,
-    
+
     // UI-specific state moved here
     pub process_search: String,
 
     // Private fields
     background_rx: Receiver<BackgroundMessage>,
     icon_tx: Sender<(u32, std::path::PathBuf)>,
-    last_refresh: Instant,
+    window_save_at: Option<Instant>,
 }
 
 impl InjectorApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let config = Config::load().unwrap_or_default();
+    pub fn new(cc: &eframe::CreationContext<'_>, config: Config) -> Self {
         let mut dll_manager = DLLManager::new();
         let selected_dlls: HashSet<&str> =
             config.selected_dlls.iter().map(String::as_str).collect();
@@ -69,9 +69,8 @@ impl InjectorApp {
             config,
             background_rx,
             icon_tx,
+            window_save_at: None,
             is_loading_processes: true,
-            auto_refresh: true,
-            last_refresh: Instant::now() - Duration::from_secs(10),
             icon_cache: HashMap::new(),
             default_dll_texture: None,
             toasts: Vec::new(),
@@ -79,7 +78,6 @@ impl InjectorApp {
         };
 
         app.load_default_dll_icon(&cc.egui_ctx);
-        app.try_select_last_app();
         app
     }
 
@@ -87,10 +85,7 @@ impl InjectorApp {
         while let Ok(message) = self.background_rx.try_recv() {
             match message {
                 BackgroundMessage::Processes(procs) => {
-                    self.processes = procs;
-                    self.is_loading_processes = false;
-                    self.try_select_last_app();
-                    self.request_missing_icons();
+                    self.update_processes(procs);
                 }
                 BackgroundMessage::Icon((pid, color_image)) => {
                     let texture =
@@ -101,13 +96,6 @@ impl InjectorApp {
         }
     }
 
-    pub fn refresh_processes(&mut self) {
-        if !self.is_loading_processes {
-            self.is_loading_processes = true;
-            self.last_refresh = Instant::now();
-        }
-    }
-
     fn request_missing_icons(&self) {
         for proc in &self.processes {
             if !proc.exe.as_os_str().is_empty() && !self.icon_cache.contains_key(&proc.pid) {
@@ -115,11 +103,60 @@ impl InjectorApp {
             }
         }
     }
-    
-    fn try_select_last_app(&mut self) {
-        if let Some(last_app_name) = &self.config.last_selected_app {
-            if let Some(proc) = self.processes.iter().find(|p| &p.name == last_app_name) {
-                self.selected_process = Some(proc.pid);
+
+    fn update_processes(&mut self, processes: Vec<ProcessInfo>) {
+        let live_pids: HashSet<u32> = processes.iter().map(|process| process.pid).collect();
+        self.icon_cache.retain(|pid, _| live_pids.contains(pid));
+        self.selected_process = resolve_process_selection(
+            &processes,
+            self.selected_process,
+            self.config.last_selected_app.as_deref(),
+        );
+        self.processes = processes;
+        self.is_loading_processes = false;
+        self.request_missing_icons();
+    }
+
+    fn track_window_geometry(&mut self, ctx: &Context) {
+        let geometry = ctx.input(|input| {
+            let viewport = input.viewport();
+            if viewport.minimized == Some(true)
+                || viewport.maximized == Some(true)
+                || viewport.fullscreen == Some(true)
+            {
+                return None;
+            }
+
+            let position = viewport.outer_rect?.min;
+            let size = viewport.inner_rect?.size();
+            Some((
+                [position.x.round(), position.y.round()],
+                [size.x.round(), size.y.round()],
+            ))
+        });
+        let now = Instant::now();
+
+        if let Some((position, size)) = geometry {
+            if self.config.window_position != Some(position)
+                || self.config.window_size != Some(size)
+            {
+                self.config.window_position = Some(position);
+                self.config.window_size = Some(size);
+                self.window_save_at = Some(now + WINDOW_SAVE_DELAY);
+            }
+        }
+
+        if let Some(save_at) = self.window_save_at {
+            if now >= save_at {
+                self.window_save_at = None;
+                if let Err(error) = self.config.save() {
+                    self.add_toast(
+                        ToastLevel::Error,
+                        format!("Failed to save window position: {}", error),
+                    );
+                }
+            } else {
+                ctx.request_repaint_after(save_at.saturating_duration_since(now));
             }
         }
     }
@@ -152,14 +189,68 @@ impl InjectorApp {
 impl eframe::App for InjectorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_background_updates(ctx);
-
-        if self.auto_refresh
-            && !self.is_loading_processes
-            && self.last_refresh.elapsed() > Duration::from_secs(5)
-        {
-            self.last_refresh = Instant::now();
-        }
-        
+        self.track_window_geometry(ctx);
         ui::show(ctx, self);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        let _ = self.config.save();
+    }
+}
+
+fn resolve_process_selection(
+    processes: &[ProcessInfo],
+    selected_pid: Option<u32>,
+    selected_name: Option<&str>,
+) -> Option<u32> {
+    if let Some(pid) = selected_pid {
+        let still_running = processes.iter().any(|process| {
+            process.pid == pid
+                && selected_name
+                    .map(|name| process.name.eq_ignore_ascii_case(name))
+                    .unwrap_or(true)
+        });
+        if still_running {
+            return Some(pid);
+        }
+    }
+
+    selected_name.and_then(|name| {
+        processes
+            .iter()
+            .find(|process| process.name.eq_ignore_ascii_case(name))
+            .map(|process| process.pid)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_process_selection, ProcessInfo};
+    use std::path::PathBuf;
+
+    fn process(name: &str, pid: u32) -> ProcessInfo {
+        ProcessInfo {
+            name: name.into(),
+            pid,
+            exe: PathBuf::new(),
+        }
+    }
+
+    #[test]
+    fn keeps_live_pid_and_reacquires_terminated_process_by_name() {
+        let processes = [process("game.exe", 10), process("game.exe", 20)];
+
+        assert_eq!(
+            resolve_process_selection(&processes, Some(20), Some("game.exe")),
+            Some(20)
+        );
+        assert_eq!(
+            resolve_process_selection(&processes, Some(99), Some("GAME.EXE")),
+            Some(10)
+        );
+        assert_eq!(
+            resolve_process_selection(&processes, Some(99), Some("missing.exe")),
+            None
+        );
     }
 }

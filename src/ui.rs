@@ -22,7 +22,12 @@ fn draw_top_bar(ctx: &egui::Context, app: &InjectorApp) {
             ui.horizontal(|ui| {
                 let process_label = match app.selected_process_name() {
                     Some(name) => format!("Selected Process: {} ({})", name, app.selected_process.unwrap()),
-                    None => "Selected Process: None".to_string(),
+                    None => app
+                        .config
+                        .last_selected_app
+                        .as_ref()
+                        .map(|name| format!("Waiting for Process: {}", name))
+                        .unwrap_or_else(|| "Selected Process: None".to_string()),
                 };
                 ui.label(RichText::new(process_label).size(16.0).color(Color32::WHITE));
                 ui.add_space(20.0);
@@ -69,13 +74,6 @@ fn draw_process_panel(ui: &mut egui::Ui, app: &mut InjectorApp) {
         ui.text_edit_singleline(&mut app.process_search);
         ui.add_space(5.0);
         ui.separator();
-        ui.add_space(5.0);
-        ui.horizontal(|ui| {
-            if ui.button("🔄 Refresh").clicked() {
-                app.refresh_processes();
-            }
-            ui.checkbox(&mut app.auto_refresh, "Auto");
-        });
         ui.add_space(10.0);
         egui::ScrollArea::vertical().id_source("process_list").show(ui, |ui| {
             if app.is_loading_processes && app.processes.is_empty() {

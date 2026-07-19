@@ -49,11 +49,11 @@ The goal is to make `DLL injection` accessible and straightforward without sacri
 
 *   **🔍 Smart Process Scanning:** Lists all running processes with their name, PID, and application icon for easy identification.
 *   **⚡ Real-time Filtering:** Instantly search the process list to find exactly what you're looking for.
-*   **🔄 Auto-Refresh Option:** Keep the process list up-to-date automatically without manual refreshes.
+*   **🔄 Live Process Tracking:** Uses lightweight native Windows snapshots to remove terminated processes and reacquire same-name replacements automatically.
 *   **📂 Easy DLL Management:** Add DLLs, select one or more with checkboxes, and manage them in a persistent list.
 *   **🚀 One-Click Injection:** Injects every selected DLL into the target process using the reliable `CreateRemoteThread` and `LoadLibraryA` method.
 *   **📋 Copy on Inject:** Optionally inject a temporary DLL copy so the original build output remains free for rebuilding.
-*   **💾 Session Persistence:** Remembers your DLL list, checked DLLs, and last selected application.
+*   **💾 Session Persistence:** Remembers your DLL list, checked DLLs, last selected application, and window placement.
 *   **🎨 Modern Dark UI:** Built with Rust's immediate-mode `egui GUI` framework for a responsive, cross-platform feel.
 *   **🔔 Toast Notifications:** Get instant, non-intrusive feedback on injection success, warnings, or failures.
 
@@ -98,8 +98,7 @@ The goal is to make `DLL injection` accessible and straightforward without sacri
 Fluffy Injector is built with a modern Rust ecosystem:
 
 *   **[egui](https://github.com/emilk/egui) & [eframe](https://github.com/emilk/egui/tree/master/crates/eframe):** For the immediate-mode graphical user interface.
-*   **[windows-rs](https://github.com/microsoft/windows-rs):** For safe, idiomatic bindings to the Windows APIs required for injection and icon extraction.
-*   **[sysinfo](https://github.com/GuillaumeGomez/sysinfo):** For cross-platform system information, used here for process scanning.
+*   **[windows-rs](https://github.com/microsoft/windows-rs):** For safe, idiomatic bindings to the Windows APIs required for live process tracking, injection, and icon extraction.
 *   **[rfd](https://github.com/PolyMeilex/rfd):** For native, platform-appropriate "open file" dialogs.
 *   **[Serde](https://serde.rs/):** For robust serialization/deserialization of the configuration file.
 
