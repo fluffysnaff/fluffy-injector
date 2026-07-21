@@ -6,7 +6,7 @@
   </a>
 </p>
 
-**A modern, open-source `Rust DLL injector` for Windows, featuring a sleek `egui GUI` and powerful process management capabilities. Find more projects at [fluffysnaff.xyz](https://fluffysnaff.xyz) and on MY [GitHub](https://github.com/fluffysnaff).**
+**Fluffy Injector is an open-source Windows DLL injector written in Rust, with a native desktop interface and live process tracking. Explore more projects at [fluffysnaff.xyz](https://fluffysnaff.xyz) or on [GitHub](https://github.com/fluffysnaff).**
 
 <p align="center">
     <a href="https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml"><img src="https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml/badge.svg" alt="Build Status"></a>
@@ -19,43 +19,35 @@
 
 > ⚠️ **Disclaimer: For Educational Use Only**
 >
-> This `Windows injector tool` is intended strictly for **educational and development purposes**, such as testing your own software. Injecting DLLs into arbitrary processes can lead to **application crashes, system instability, or detection and banning by anti-cheat software**.
+> This tool is intended strictly for **educational and development purposes**, such as working with software you own or are authorized to inspect. Injecting DLLs into arbitrary processes can cause **application crashes, system instability, or anti-cheat penalties**.
 >
 > **Use this tool responsibly and ethically.** The author (`fluffysnaff`) is not responsible for any damage or consequences resulting from its misuse.
 
 ---
 
-## 🖼️ GUI Preview
-
-<p align="center">
-  <img src="https://github.com/fluffysnaff/fluffy-injector/raw/main/assets/screenshot.png" alt="Fluffy Injector UI Screenshot">
-</p>
-
----
-
 ## What is Fluffy Injector?
 
-**Fluffy Injector** is a `Windows injector tool` that replaces complex command-line utilities with a clean, intuitive graphical interface. Built entirely in Rust, it provides a safe and efficient way to perform `DLL injection`. It's the perfect utility for:
+**Fluffy Injector** replaces command-line DLL injection workflows with a focused Windows desktop interface. It is designed for controlled development, research, and modification workflows:
 
-*   **Developers:** Quickly test your custom DLLs in a live environment.
-*   **Security Researchers:** Analyze process behavior and interactions.
-*   **Modders & Enthusiasts:** Experiment with game or application modifications in a controlled way.
+- **Developers:** Load custom DLLs while developing software.
+- **Security researchers:** Analyze process behavior and interactions.
+- **Modders and enthusiasts:** Experiment with authorized application modifications.
 
-The goal is to make `DLL injection` accessible and straightforward without sacrificing control.
+The goal is to make DLL injection straightforward without hiding important controls or results.
 
 ---
 
 ## ✨ Key Features
 
-*   **🔍 Smart Process Scanning:** Lists all running processes with their name, PID, and application icon for easy identification.
-*   **⚡ Real-time Filtering:** Instantly search the process list to find exactly what you're looking for.
-*   **🔄 Live Process Tracking:** Uses lightweight native Windows snapshots to remove terminated processes and reacquire same-name replacements automatically.
-*   **📂 Easy DLL Management:** Add DLLs, select one or more with checkboxes, and manage them in a persistent list.
-*   **🚀 One-Click Injection:** Injects every selected DLL with Wraith-backed remote process operations, Unicode paths, verified `LoadLibraryW` completion, and automatic remote-memory cleanup.
-*   **📋 Copy on Inject:** Optionally inject a temporary DLL copy so the original build output remains free for rebuilding, with an optional random filename.
-*   **💾 Session Persistence:** Remembers your DLL list, checked DLLs, last selected application, window size, and multi-monitor placement.
-*   **🎨 Modern Dark UI:** Built with Rust's immediate-mode `egui GUI` framework for a responsive, cross-platform feel.
-*   **🔔 Toast Notifications:** Get instant, non-intrusive feedback on injection success, warnings, or failures.
+- **🔍 Native process scanning:** Lists running processes with their names, PIDs, and available application icons.
+- **⚡ Live filtering:** Searches the process list as you type.
+- **🔄 Automatic process tracking:** Removes terminated processes and reacquires a same-name replacement without a manual refresh.
+- **📂 Multi-DLL management:** Adds, selects, injects, and removes one or more DLLs from a persistent list.
+- **🚀 Verified injection:** Uses Wraith-backed remote memory operations, Unicode paths, `LoadLibraryW`, and completion checks.
+- **📋 Copy on inject:** Injects a temporary copy so the original DLL remains available for rebuilding, with an optional random filename.
+- **💾 Persistent sessions:** Stores DLLs, checked selections, the last target name, window size, and multi-monitor placement in Windows AppData.
+- **🎨 Native dark interface:** Uses `eframe` for a responsive Windows desktop experience.
+- **🔔 Toast notifications:** Reports successful injections, warnings, and failures without blocking the interface.
 
 ---
 
@@ -63,45 +55,41 @@ The goal is to make `DLL injection` accessible and straightforward without sacri
 
 ### For Users (Recommended)
 
-1.  **Download:** Grab `release-build` from the latest successful [**GitHub Actions build**](https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml) or download `fluffy_injector.exe` from a published [**GitHub Release**](https://github.com/fluffysnaff/fluffy-injector/releases).
-2.  **Run:** Place the executable in a folder of your choice and run it. No installation is required.
-3.  **Inject:**
-    *   Select a target process from the left panel.
-    *   Click "Add DLL" to add your desired DLL to the list in the right panel.
-    *   Select the DLL you just added.
-    *   Click "Inject"!
+1. **Download:** Download and extract the `release-build` artifact from the latest successful [GitHub Actions build](https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml), or download `fluffy_injector.exe` from a published [GitHub Release](https://github.com/fluffysnaff/fluffy-injector/releases).
+2. **Run:** Launch `fluffy_injector.exe`. No installation is required.
+3. **Inject:**
+   - Select a target process from the left panel.
+   - Select **Add DLL** for each DLL you want to add.
+   - Check every DLL you want to inject.
+   - Optionally enable **Copy on inject** and **Random name**.
+   - Select **Inject**.
 
 ### For Developers (Building from Source)
 
-1.  **Requirements:**
-    *   [Rust Toolchain](https://rustup.rs/) (nightly)
-    *   Git
-2.  **Clone the Repository:**
-    ```bash
-    git clone https://github.com/fluffysnaff/fluffy-injector.git
-    cd fluffy-injector
-    ```
-3.  **Build and Run:**
-    ```bash
-    # For a debug build
-    cargo run
-    
-    # For a release build (recommended for performance)
-    cargo run --release 
-    ```
-    The final executable will be located in the `target/release` directory.
+Requirements:
+
+- Windows with the MSVC C++ build tools
+- [Rust nightly](https://rustup.rs/)
+- Git
+
+```powershell
+git clone https://github.com/fluffysnaff/fluffy-injector.git
+cd fluffy-injector
+rustup toolchain install nightly
+cargo +nightly build --release
+```
+
+The executable is written to `target\release\fluffy_injector.exe`.
 
 ---
 
 ## 🛠️ Technology Stack
 
-Fluffy Injector is built with a modern Rust ecosystem:
-
-*   **[egui](https://github.com/emilk/egui) & [eframe](https://github.com/emilk/egui/tree/master/crates/eframe):** For the immediate-mode graphical user interface.
-*   **[wraith-rs](https://crates.io/crates/wraith-rs):** For remote process access, direct-syscall memory operations, module discovery, and RAII cleanup.
-*   **[windows-rs](https://github.com/microsoft/windows-rs):** For safe, idiomatic bindings to Windows APIs required for process tracking, thread creation, and icon extraction.
-*   **[rfd](https://github.com/PolyMeilex/rfd):** For native, platform-appropriate "open file" dialogs.
-*   **[Serde](https://serde.rs/):** For robust serialization and deserialization of persisted application settings.
+- **[eframe](https://crates.io/crates/eframe):** Desktop application framework and persistent window state.
+- **[wraith-rs](https://crates.io/crates/wraith-rs):** Remote process access, memory operations, module discovery, and allocation cleanup.
+- **[windows-rs](https://github.com/microsoft/windows-rs):** Windows process snapshots, thread creation, executable icons, and native handles.
+- **[rfd](https://github.com/PolyMeilex/rfd):** Native DLL file selection.
+- **[Serde](https://serde.rs/) and [RON](https://github.com/ron-rs/ron):** Persistent application settings.
 
 ---
 
@@ -109,9 +97,9 @@ Fluffy Injector is built with a modern Rust ecosystem:
 
 Contributions are welcome! Whether you have ideas for new features, bug fixes, or code improvements, your help is appreciated.
 
-*   **Report Issues:** Found a bug? Open an issue on the [**GitHub Issues page**](https://github.com/fluffysnaff/fluffy-injector/issues).
-*   **Suggest Features:** Have an idea? Start a discussion by creating an issue.
-*   **Submit Pull Requests:** Please open an issue first to discuss your planned changes. This helps ensure your work aligns with the project's goals.
+- **Report issues:** Open an issue on the [GitHub Issues page](https://github.com/fluffysnaff/fluffy-injector/issues).
+- **Suggest features:** Start a discussion by creating an issue.
+- **Submit pull requests:** Open an issue first to discuss the proposed change and confirm it fits the project.
 
 ---
 

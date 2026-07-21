@@ -30,14 +30,11 @@ pub(crate) struct InjectorApp {
 
 impl InjectorApp {
     pub(crate) fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let (config, config_error) = match Config::load(cc.storage) {
-            Ok(config) => (config, None),
-            Err(error) => (Config::default(), Some(error)),
-        };
+        let config = Config::load(cc.storage);
         let (background_tx, background_rx) = mpsc::channel();
         let (icon_tx, icon_rx) = mpsc::channel();
         spawn_workers(&cc.egui_ctx, &background_tx, icon_rx);
-        let mut app = Self {
+        Self {
             processes: Vec::new(),
             selected_process: None,
             config,
@@ -50,20 +47,6 @@ impl InjectorApp {
             toasts: Vec::new(),
             is_injecting: false,
             process_search: String::new(),
-        };
-        app.report_startup_errors(config_error, cc.storage.is_none());
-        app
-    }
-
-    fn report_startup_errors(&mut self, config_error: Option<anyhow::Error>, no_storage: bool) {
-        if let Some(error) = config_error {
-            self.add_toast(
-                ToastLevel::Error,
-                format!("Failed to load settings: {error}"),
-            );
-        }
-        if no_storage {
-            self.add_toast(ToastLevel::Error, "AppData settings are unavailable.");
         }
     }
 

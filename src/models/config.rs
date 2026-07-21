@@ -22,16 +22,17 @@ pub(crate) struct Dll {
 }
 
 impl Config {
-    pub(crate) fn load(storage: Option<&dyn Storage>) -> Result<Self> {
-        let Some(data) = storage.and_then(|storage| storage.get_string(APP_KEY)) else {
-            return Ok(Self::default());
-        };
-        ron::from_str(&data).context("Failed to parse persisted settings")
+    pub(crate) fn load(storage: Option<&dyn Storage>) -> Self {
+        storage
+            .and_then(|storage| storage.get_string(APP_KEY))
+            .and_then(|data| ron::from_str(&data).ok())
+            .unwrap_or_default()
     }
 
     pub(crate) fn save(&self, storage: &mut dyn Storage) -> Result<()> {
         let data = ron::to_string(self).context("Failed to serialize settings")?;
         storage.set_string(APP_KEY, data);
+        storage.flush();
         Ok(())
     }
 }
