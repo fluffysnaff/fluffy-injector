@@ -1,27 +1,29 @@
 use crate::app::InjectorApp;
-use crate::core::injector;
 use crate::models::toast::ToastLevel;
 use eframe::egui::{self, Color32, Frame, Margin, RichText, Vec2};
 
-pub fn show(ctx: &egui::Context, app: &mut InjectorApp) {
-    ctx.set_visuals(egui::Visuals::dark());
-    draw_top_bar(ctx, app);
-    draw_central_panel(ctx, app);
-    draw_toasts(ctx, app);
+pub(crate) fn show(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
+    ui.ctx().set_visuals(egui::Visuals::dark());
+    draw_top_bar(ui, app);
+    let changed = draw_central_panel(ui, app);
+    draw_toasts(ui.ctx(), app);
+    changed
 }
 
-fn draw_top_bar(ctx: &egui::Context, app: &InjectorApp) {
-    egui::TopBottomPanel::top("selected_info_panel")
+fn draw_top_bar(ui: &mut egui::Ui, app: &InjectorApp) {
+    egui::Panel::top("selected_info_panel")
         .frame(
             Frame::default()
                 .fill(Color32::from_rgb(30, 30, 30))
                 .stroke(egui::Stroke::new(1.0_f32, Color32::from_gray(80)))
-                .inner_margin(Margin::same(8.0)),
+                .inner_margin(Margin::same(8)),
         )
-        .show(ctx, |ui| {
+        .show(ui, |ui| {
             ui.horizontal(|ui| {
-                let process_label = match app.selected_process_name() {
-                    Some(name) => format!("Selected Process: {} ({})", name, app.selected_process.unwrap()),
+                let process_label = match app.selected_process_info() {
+                    Some(process) => {
+                        format!("Selected Process: {} ({})", process.name, process.pid)
+                    }
                     None => app
                         .config
                         .last_selected_app
@@ -29,27 +31,33 @@ fn draw_top_bar(ctx: &egui::Context, app: &InjectorApp) {
                         .map(|name| format!("Waiting for Process: {}", name))
                         .unwrap_or_else(|| "Selected Process: None".to_string()),
                 };
-                ui.label(RichText::new(process_label).size(16.0).color(Color32::WHITE));
+                ui.label(
+                    RichText::new(process_label)
+                        .size(16.0)
+                        .color(Color32::WHITE),
+                );
                 ui.add_space(20.0);
                 ui.separator();
                 ui.add_space(20.0);
-                let dll_label = format!(
-                    "Selected DLLs: {}",
-                    app.dll_manager.selected_count()
+                let dll_label = format!("Selected DLLs: {}", app.selected_dlls().count());
+                ui.label(
+                    RichText::new(dll_label)
+                        .size(16.0)
+                        .color(Color32::LIGHT_BLUE),
                 );
-                ui.label(RichText::new(dll_label).size(16.0).color(Color32::LIGHT_BLUE));
             });
         });
 }
 
-fn draw_central_panel(ctx: &egui::Context, app: &mut InjectorApp) {
+fn draw_central_panel(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
+    let mut changed = false;
     egui::CentralPanel::default()
         .frame(
             Frame::default()
                 .fill(Color32::from_rgb(20, 20, 20))
-                .inner_margin(Margin::same(12.0)),
+                .inner_margin(Margin::same(12)),
         )
-        .show(ctx, |ui| {
+        .show(ui, |ui| {
             let total_width = ui.available_width();
             let total_height = ui.available_height();
             let left_width = total_width * 0.4;
@@ -57,91 +65,93 @@ fn draw_central_panel(ctx: &egui::Context, app: &mut InjectorApp) {
 
             ui.horizontal(|ui| {
                 ui.allocate_ui(Vec2::new(left_width, total_height), |ui| {
-                    draw_process_panel(ui, app);
+                    changed |= draw_process_panel(ui, app);
                 });
                 ui.allocate_ui(Vec2::new(right_width, total_height), |ui| {
-                    draw_dll_panel(ui, app);
+                    changed |= draw_dll_panel(ui, app);
                 });
             });
         });
+    changed
 }
 
-fn draw_process_panel(ui: &mut egui::Ui, app: &mut InjectorApp) {
-    let mut errors_to_toast: Vec<String> = Vec::new();
+fn draw_process_panel(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
+    let mut changed = false;
     ui.vertical(|ui| {
-        ui.add_space(10.0);
         ui.label(RichText::new("🔍 Search Process").size(14.0).strong());
         ui.text_edit_singleline(&mut app.process_search);
         ui.add_space(5.0);
         ui.separator();
         ui.add_space(10.0);
-        egui::ScrollArea::vertical().id_source("process_list").show(ui, |ui| {
-            if app.is_loading_processes && app.processes.is_empty() {
-                ui.add(egui::Spinner::new());
-            } else {
-                let search_lower = app.process_search.to_lowercase();
-                for proc in &app.processes {
-                    if !app.process_search.is_empty() && !proc.name.to_lowercase().contains(&search_lower) {
-                        continue;
-                    }
-                    ui.horizontal(|ui| {
-                        if let Some(texture) = app.icon_cache.get(&proc.pid) {
-                            ui.image((texture.id(), Vec2::new(16.0, 16.0)));
-                        } else {
-                            ui.label("❔");
+        egui::ScrollArea::vertical()
+            .id_salt("process_list")
+            .show(ui, |ui| {
+                if app.is_loading_processes && app.processes.is_empty() {
+                    ui.add(egui::Spinner::new());
+                } else {
+                    let search_lower = app.process_search.to_lowercase();
+                    for proc in &app.processes {
+                        if !app.process_search.is_empty()
+                            && !proc.name.to_lowercase().contains(&search_lower)
+                        {
+                            continue;
                         }
-                        let is_selected = app.selected_process == Some(proc.pid);
-                        let label = format!("{} ({})", proc.name, proc.pid);
-                        if ui.selectable_label(is_selected, RichText::new(label)).clicked() {
-                            app.selected_process = Some(proc.pid);
-                            app.config.last_selected_app = Some(proc.name.clone());
-                            if let Err(e) = app.config.save() {
-                                errors_to_toast.push(format!("Failed to save config: {}", e));
+                        ui.horizontal(|ui| {
+                            if let Some(texture) = app.icon_cache.get(&proc.pid) {
+                                ui.image((texture.id(), Vec2::new(16.0, 16.0)));
+                            } else {
+                                ui.label("❔");
                             }
-                        }
-                    });
+                            let is_selected = app.selected_process == Some(proc.pid);
+                            let label = format!("{} ({})", proc.name, proc.pid);
+                            if ui
+                                .selectable_label(is_selected, RichText::new(label))
+                                .clicked()
+                            {
+                                app.selected_process = Some(proc.pid);
+                                app.config.last_selected_app = Some(proc.name.clone());
+                                changed = true;
+                            }
+                        });
+                    }
                 }
-            }
-        });
+            });
     });
-    for error_msg in errors_to_toast {
-        app.add_toast(ToastLevel::Error, error_msg);
-    }
+    changed
 }
 
-fn draw_dll_panel(ui: &mut egui::Ui, app: &mut InjectorApp) {
-    let mut save_config = false;
+fn draw_dll_panel(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
+    let mut changed = false;
     ui.vertical(|ui| {
-        ui.add_space(10.0);
-        ui.label(RichText::new("📂 DLLs").size(18.0).strong().color(Color32::WHITE));
+        ui.label(
+            RichText::new("📂 DLLs")
+                .size(18.0)
+                .strong()
+                .color(Color32::WHITE),
+        );
         ui.add_space(5.0);
         ui.separator();
         ui.add_space(5.0);
 
-        egui::ScrollArea::vertical().id_source("dll_list").show(ui, |ui| {
-            for i in 0..app.dll_manager.get_dlls().len() {
-                let mut is_selected = app.dll_manager.is_selected(i);
-                let file_name = std::path::Path::new(&app.dll_manager.get_dlls()[i])
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                
-                ui.horizontal(|ui| {
-                    if let Some(tex) = &app.default_dll_texture {
-                        ui.image((tex.id(), Vec2::new(16.0, 16.0)));
-                    } else {
-                        ui.label("❔");
-                    }
-                    
-                    if ui.checkbox(&mut is_selected, file_name).changed() {
-                        app.dll_manager.set_selected(i, is_selected);
-                        save_config = true;
-                    }
-                });
-            }
-        });
-        
+        egui::ScrollArea::vertical()
+            .id_salt("dll_list")
+            .show(ui, |ui| {
+                for dll in &mut app.dlls {
+                    let file_name = std::path::Path::new(&dll.path)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy();
+
+                    ui.horizontal(|ui| {
+                        ui.image((app.default_dll_texture.id(), Vec2::new(16.0, 16.0)));
+
+                        if ui.checkbox(&mut dll.selected, file_name).changed() {
+                            changed = true;
+                        }
+                    });
+                }
+            });
+
         ui.add_space(20.0);
         ui.separator();
         ui.add_space(10.0);
@@ -151,67 +161,55 @@ fn draw_dll_panel(ui: &mut egui::Ui, app: &mut InjectorApp) {
             .on_hover_text("Keeps the original DLL free for rebuilding.")
             .changed()
         {
-            save_config = true;
+            changed = true;
+        }
+        let random_name_enabled = app.config.copy_dll_on_inject;
+        if ui
+            .add_enabled(
+                random_name_enabled,
+                egui::Checkbox::new(&mut app.config.randomize_dll_name, "Random name"),
+            )
+            .on_hover_text("Gives the copied DLL a random name.")
+            .changed()
+        {
+            changed = true;
         }
         ui.add_space(10.0);
 
         ui.horizontal(|ui| {
             let button_size = Vec2::new(100.0, 35.0);
-            if ui.add(egui::Button::new("➕ Add DLL").min_size(button_size)).clicked() {
+            if ui
+                .add(egui::Button::new("➕ Add DLL").min_size(button_size))
+                .clicked()
+            {
                 if let Some(path) = crate::core::dll_selector::select_dll() {
-                    if !app.dll_manager.get_dlls().contains(&path) {
-                        app.dll_manager.add(path.clone());
-                        app.config.dlls.push(path);
-                        save_config = true;
+                    if !app.dlls.iter().any(|dll| dll.path == path) {
+                        app.dlls.push(crate::app::Dll {
+                            path,
+                            selected: false,
+                        });
+                        changed = true;
                     } else {
                         app.add_toast(ToastLevel::Warning, "DLL is already in the list.");
                     }
                 }
             }
-            let selected_count = app.dll_manager.selected_count();
-            let inject_enabled = app.selected_process.is_some() && selected_count > 0;
+            let selected_count = app.selected_dlls().count();
+            let inject_enabled =
+                app.selected_process.is_some() && selected_count > 0 && !app.is_injecting;
+            let inject_label = if app.is_injecting {
+                "Injecting..."
+            } else {
+                "🚀 Inject"
+            };
             if ui
                 .add_enabled(
                     inject_enabled,
-                    egui::Button::new("🚀 Inject").min_size(button_size),
+                    egui::Button::new(inject_label).min_size(button_size),
                 )
                 .clicked()
             {
-                if let Some(pid) = app.selected_process {
-                    let copy_on_inject = app.config.copy_dll_on_inject;
-                    let failures: Vec<String> = app
-                        .dll_manager
-                        .selected_paths()
-                        .filter_map(|dll_path| {
-                            injector::inject_dll(pid, dll_path, copy_on_inject)
-                                .err()
-                                .map(|error| {
-                                    let name = std::path::Path::new(dll_path)
-                                        .file_name()
-                                        .unwrap_or_default()
-                                        .to_string_lossy();
-                                    format!("{}: {}", name, error)
-                                })
-                        })
-                        .collect();
-
-                    if failures.is_empty() {
-                        app.add_toast(
-                            ToastLevel::Success,
-                            format!("Injected {} DLL(s).", selected_count),
-                        );
-                    } else {
-                        app.add_toast(
-                            ToastLevel::Error,
-                            format!(
-                                "Injected {}/{}. Failed: {}",
-                                selected_count - failures.len(),
-                                selected_count,
-                                failures.join("; ")
-                            ),
-                        );
-                    }
-                }
+                app.start_injection(ui.ctx());
             }
             if ui
                 .add_enabled(
@@ -220,28 +218,16 @@ fn draw_dll_panel(ui: &mut egui::Ui, app: &mut InjectorApp) {
                 )
                 .clicked()
             {
-                let removed = app.dll_manager.remove_selected();
-                app.config.dlls = app.dll_manager.get_dlls().to_vec();
-                save_config = true;
+                let previous_len = app.dlls.len();
+                app.dlls.retain(|dll| !dll.selected);
+                let removed = previous_len - app.dlls.len();
+                changed = true;
                 app.add_toast(ToastLevel::Info, format!("Removed {} DLL(s).", removed));
             }
         });
         ui.add_space(10.0);
     });
-
-    if save_config {
-        app.config.selected_dlls = app
-            .dll_manager
-            .selected_paths()
-            .map(str::to_owned)
-            .collect();
-        if let Err(error) = app.config.save() {
-            app.add_toast(
-                ToastLevel::Error,
-                format!("Failed to save config: {}", error),
-            );
-        }
-    }
+    changed
 }
 
 fn draw_toasts(ctx: &egui::Context, app: &mut InjectorApp) {

@@ -1,6 +1,6 @@
 use rfd::FileDialog;
 
-pub fn select_dll() -> Option<String> {
+pub(crate) fn select_dll() -> Option<String> {
     FileDialog::new()
         .add_filter("DLL Files", &["dll"])
         .pick_file()

@@ -1,30 +1,28 @@
-use chrono::{DateTime, Duration, Utc};
+use std::time::{Duration, Instant};
 
-pub enum ToastLevel {
+pub(crate) enum ToastLevel {
     Info,
     Success,
     Warning,
     Error,
 }
 
-pub struct Toast {
+pub(crate) struct Toast {
     pub level: ToastLevel,
     pub message: String,
-    created_at: DateTime<Utc>,
-    duration: Duration,
+    created_at: Instant,
 }
 
 impl Toast {
-    pub fn new(level: ToastLevel, message: impl Into<String>) -> Self {
+    pub(crate) fn new(level: ToastLevel, message: impl Into<String>) -> Self {
         Self {
             level,
             message: message.into(),
-            created_at: Utc::now(),
-            duration: Duration::seconds(5),
+            created_at: Instant::now(),
         }
     }
 
-    pub fn is_alive(&self) -> bool {
-        Utc::now() - self.created_at < self.duration
+    pub(crate) fn is_alive(&self) -> bool {
+        self.created_at.elapsed() < Duration::from_secs(5)
     }
 }
