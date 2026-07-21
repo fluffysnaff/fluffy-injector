@@ -7,7 +7,7 @@ mod models;
 mod ui;
 
 use crate::app::InjectorApp;
-use crate::models::config::{DEFAULT_WINDOW_SIZE, MIN_WINDOW_SIZE};
+use crate::models::config::{APP_NAME, DEFAULT_WINDOW_SIZE, MIN_WINDOW_SIZE};
 use eframe::{icon_data, NativeOptions};
 use std::sync::Arc;
 
@@ -21,12 +21,13 @@ fn main() -> eframe::Result<()> {
 
     let native_options = NativeOptions {
         viewport,
+        persist_window: true,
         centered: true,
         ..Default::default()
     };
 
     eframe::run_native(
-        "Fluffy Injector",
+        APP_NAME,
         native_options,
         Box::new(|cc| Ok(Box::new(InjectorApp::new(cc)))),
     )

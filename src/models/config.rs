@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const DEFAULT_WINDOW_SIZE: [f32; 2] = [800.0, 600.0];
 pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [600.0, 400.0];
+pub(crate) const APP_NAME: &str = "Fluffy Injector";
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(crate) struct Config {
@@ -13,20 +14,12 @@ pub(crate) struct Config {
     pub copy_dll_on_inject: bool,
     #[serde(default)]
     pub randomize_dll_name: bool,
-    #[serde(default)]
-    pub window: Option<WindowPlacement>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Dll {
     pub path: String,
     pub selected: bool,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub(crate) struct WindowPlacement {
-    pub position: [i32; 2],
-    pub maximized: bool,
 }
 
 impl Config {
