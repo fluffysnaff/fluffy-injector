@@ -15,23 +15,28 @@ fn draw_top_bar(ctx: &egui::Context, app: &InjectorApp) {
         .frame(
             Frame::default()
                 .fill(Color32::from_rgb(30, 30, 30))
-                .stroke(egui::Stroke::new(1.0, Color32::from_gray(80)))
+                .stroke(egui::Stroke::new(1.0_f32, Color32::from_gray(80)))
                 .inner_margin(Margin::same(8.0)),
         )
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let process_label = match app.selected_process_name() {
                     Some(name) => format!("Selected Process: {} ({})", name, app.selected_process.unwrap()),
-                    None => "Selected Process: None".to_string(),
+                    None => app
+                        .config
+                        .last_selected_app
+                        .as_ref()
+                        .map(|name| format!("Waiting for Process: {}", name))
+                        .unwrap_or_else(|| "Selected Process: None".to_string()),
                 };
                 ui.label(RichText::new(process_label).size(16.0).color(Color32::WHITE));
                 ui.add_space(20.0);
                 ui.separator();
                 ui.add_space(20.0);
-                let dll_label = match app.dll_manager.selected_path() {
-                    Some(path) => format!("Selected DLL: {}", std::path::Path::new(&path).file_name().unwrap_or_default().to_string_lossy()),
-                    None => "Selected DLL: None".to_string(),
-                };
+                let dll_label = format!(
+                    "Selected DLLs: {}",
+                    app.dll_manager.selected_count()
+                );
                 ui.label(RichText::new(dll_label).size(16.0).color(Color32::LIGHT_BLUE));
             });
         });
@@ -69,13 +74,6 @@ fn draw_process_panel(ui: &mut egui::Ui, app: &mut InjectorApp) {
         ui.text_edit_singleline(&mut app.process_search);
         ui.add_space(5.0);
         ui.separator();
-        ui.add_space(5.0);
-        ui.horizontal(|ui| {
-            if ui.button("🔄 Refresh").clicked() {
-                app.refresh_processes();
-            }
-            ui.checkbox(&mut app.auto_refresh, "Auto");
-        });
         ui.add_space(10.0);
         egui::ScrollArea::vertical().id_source("process_list").show(ui, |ui| {
             if app.is_loading_processes && app.processes.is_empty() {
@@ -112,6 +110,7 @@ fn draw_process_panel(ui: &mut egui::Ui, app: &mut InjectorApp) {
 }
 
 fn draw_dll_panel(ui: &mut egui::Ui, app: &mut InjectorApp) {
+    let mut save_config = false;
     ui.vertical(|ui| {
         ui.add_space(10.0);
         ui.label(RichText::new("📂 DLLs").size(18.0).strong().color(Color32::WHITE));
@@ -121,7 +120,7 @@ fn draw_dll_panel(ui: &mut egui::Ui, app: &mut InjectorApp) {
 
         egui::ScrollArea::vertical().id_source("dll_list").show(ui, |ui| {
             for i in 0..app.dll_manager.get_dlls().len() {
-                let is_selected = app.dll_manager.selected_dll() == Some(i);
+                let mut is_selected = app.dll_manager.is_selected(i);
                 let file_name = std::path::Path::new(&app.dll_manager.get_dlls()[i])
                     .file_name()
                     .unwrap_or_default()
@@ -135,8 +134,9 @@ fn draw_dll_panel(ui: &mut egui::Ui, app: &mut InjectorApp) {
                         ui.label("❔");
                     }
                     
-                    if ui.selectable_label(is_selected, file_name).clicked() {
-                        app.dll_manager.select(Some(i));
+                    if ui.checkbox(&mut is_selected, file_name).changed() {
+                        app.dll_manager.set_selected(i, is_selected);
+                        save_config = true;
                     }
                 });
             }
@@ -146,6 +146,15 @@ fn draw_dll_panel(ui: &mut egui::Ui, app: &mut InjectorApp) {
         ui.separator();
         ui.add_space(10.0);
 
+        if ui
+            .checkbox(&mut app.config.copy_dll_on_inject, "Copy on inject")
+            .on_hover_text("Keeps the original DLL free for rebuilding.")
+            .changed()
+        {
+            save_config = true;
+        }
+        ui.add_space(10.0);
+
         ui.horizontal(|ui| {
             let button_size = Vec2::new(100.0, 35.0);
             if ui.add(egui::Button::new("➕ Add DLL").min_size(button_size)).clicked() {
@@ -153,33 +162,86 @@ fn draw_dll_panel(ui: &mut egui::Ui, app: &mut InjectorApp) {
                     if !app.dll_manager.get_dlls().contains(&path) {
                         app.dll_manager.add(path.clone());
                         app.config.dlls.push(path);
-                        let _ = app.config.save();
+                        save_config = true;
                     } else {
                         app.add_toast(ToastLevel::Warning, "DLL is already in the list.");
                     }
                 }
             }
-            let inject_enabled = app.selected_process.is_some() && app.dll_manager.selected_dll().is_some();
-            if ui.add_enabled(inject_enabled, egui::Button::new("🚀 Inject DLL").min_size(button_size)).clicked() {
-                if let (Some(pid), Some(dll_path)) = (app.selected_process, app.dll_manager.selected_path()) {
-                    match injector::inject_dll(pid, &dll_path) {
-                        Ok(_) => app.add_toast(ToastLevel::Success, "Injection successful!"),
-                        Err(e) => app.add_toast(ToastLevel::Error, format!("Injection failed: {}", e)),
+            let selected_count = app.dll_manager.selected_count();
+            let inject_enabled = app.selected_process.is_some() && selected_count > 0;
+            if ui
+                .add_enabled(
+                    inject_enabled,
+                    egui::Button::new("🚀 Inject").min_size(button_size),
+                )
+                .clicked()
+            {
+                if let Some(pid) = app.selected_process {
+                    let copy_on_inject = app.config.copy_dll_on_inject;
+                    let failures: Vec<String> = app
+                        .dll_manager
+                        .selected_paths()
+                        .filter_map(|dll_path| {
+                            injector::inject_dll(pid, dll_path, copy_on_inject)
+                                .err()
+                                .map(|error| {
+                                    let name = std::path::Path::new(dll_path)
+                                        .file_name()
+                                        .unwrap_or_default()
+                                        .to_string_lossy();
+                                    format!("{}: {}", name, error)
+                                })
+                        })
+                        .collect();
+
+                    if failures.is_empty() {
+                        app.add_toast(
+                            ToastLevel::Success,
+                            format!("Injected {} DLL(s).", selected_count),
+                        );
+                    } else {
+                        app.add_toast(
+                            ToastLevel::Error,
+                            format!(
+                                "Injected {}/{}. Failed: {}",
+                                selected_count - failures.len(),
+                                selected_count,
+                                failures.join("; ")
+                            ),
+                        );
                     }
                 }
             }
-            let remove_enabled = app.dll_manager.selected_dll().is_some();
-            if ui.add_enabled(remove_enabled, egui::Button::new("❌ Remove File").min_size(button_size)).clicked() {
-                if let Some(selected_index) = app.dll_manager.selected_dll() {
-                    app.dll_manager.remove(selected_index);
-                    app.config.dlls.remove(selected_index);
-                    let _ = app.config.save();
-                    app.add_toast(ToastLevel::Info, "DLL removed.");
-                }
+            if ui
+                .add_enabled(
+                    selected_count > 0,
+                    egui::Button::new("❌ Remove").min_size(button_size),
+                )
+                .clicked()
+            {
+                let removed = app.dll_manager.remove_selected();
+                app.config.dlls = app.dll_manager.get_dlls().to_vec();
+                save_config = true;
+                app.add_toast(ToastLevel::Info, format!("Removed {} DLL(s).", removed));
             }
         });
         ui.add_space(10.0);
     });
+
+    if save_config {
+        app.config.selected_dlls = app
+            .dll_manager
+            .selected_paths()
+            .map(str::to_owned)
+            .collect();
+        if let Err(error) = app.config.save() {
+            app.add_toast(
+                ToastLevel::Error,
+                format!("Failed to save config: {}", error),
+            );
+        }
+    }
 }
 
 fn draw_toasts(ctx: &egui::Context, app: &mut InjectorApp) {
