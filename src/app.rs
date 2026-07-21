@@ -1,10 +1,11 @@
-use crate::core::{icon_loader, injector, process_scanner};
+use crate::core::{icon_loader, injector, process_scanner, window_placement};
 use crate::models::config::Config;
 use crate::models::process::ProcessInfo;
 use crate::models::toast::{Toast, ToastLevel};
 use eframe::egui::{self, ColorImage, Context, TextureHandle};
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender};
+use windows::Win32::Foundation::HWND;
 
 pub(crate) enum BackgroundMessage {
     Processes(Vec<ProcessInfo>),
@@ -26,6 +27,7 @@ pub(crate) struct InjectorApp {
     background_rx: Receiver<BackgroundMessage>,
     background_tx: Sender<BackgroundMessage>,
     icon_tx: Sender<(u32, std::path::PathBuf)>,
+    window: Option<HWND>,
 }
 
 impl InjectorApp {
@@ -34,7 +36,7 @@ impl InjectorApp {
         let (background_tx, background_rx) = mpsc::channel();
         let (icon_tx, icon_rx) = mpsc::channel();
         spawn_workers(&cc.egui_ctx, &background_tx, icon_rx);
-        Self {
+        let mut app = Self {
             processes: Vec::new(),
             selected_process: None,
             config,
@@ -47,6 +49,21 @@ impl InjectorApp {
             toasts: Vec::new(),
             is_injecting: false,
             process_search: String::new(),
+            window: window_placement::handle(cc),
+        };
+        app.restore_window();
+        app
+    }
+
+    fn restore_window(&mut self) {
+        let (Some(window), Some(placement)) = (self.window, self.config.window) else {
+            return;
+        };
+        if let Err(error) = window_placement::restore(window, placement) {
+            self.add_toast(
+                ToastLevel::Error,
+                format!("Failed to restore window: {error}"),
+            );
         }
     }
 
@@ -84,11 +101,24 @@ impl InjectorApp {
     }
 
     fn persist_config(&mut self, storage: &mut dyn eframe::Storage) {
+        self.capture_window();
         if let Err(error) = self.config.save(storage) {
             self.add_toast(
                 ToastLevel::Error,
                 format!("Failed to save settings: {error}"),
             );
+        }
+    }
+
+    fn capture_window(&mut self) {
+        let Some(window) = self.window else {
+            return;
+        };
+        match window_placement::capture(window) {
+            Ok(placement) => self.config.window = Some(placement),
+            Err(error) => {
+                self.add_toast(ToastLevel::Error, format!("Failed to save window: {error}"))
+            }
         }
     }
 

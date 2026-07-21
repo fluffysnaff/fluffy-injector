@@ -13,12 +13,20 @@ pub(crate) struct Config {
     pub copy_dll_on_inject: bool,
     #[serde(default)]
     pub randomize_dll_name: bool,
+    #[serde(default)]
+    pub window: Option<WindowPlacement>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Dll {
     pub path: String,
     pub selected: bool,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub(crate) struct WindowPlacement {
+    pub position: [i32; 2],
+    pub maximized: bool,
 }
 
 impl Config {

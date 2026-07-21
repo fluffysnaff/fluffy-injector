@@ -21,6 +21,7 @@ fn main() -> eframe::Result<()> {
 
     let native_options = NativeOptions {
         viewport,
+        centered: true,
         ..Default::default()
     };
 
