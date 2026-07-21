@@ -3,16 +3,19 @@ name = "fluffy_injector"
 version = "0.2.0"
 edition = "2021"
 
+[[bin]]
+name = "fluffy_injector"
+path = "src/main.rs"
+test = false
+bench = false
+
 [dependencies]
-egui = "0.27"
-eframe = "0.27"
-egui_extras = "0.27"
-rfd = "0.14"
-windows = { version = "0.60.0", features = [
+eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow", "persistence"] }
+rfd = { version = "0.17", default-features = false }
+wraith-rs = { version = "0.1.8", default-features = false, features = ["std", "remote"] }
+windows = { version = "0.62", features = [
     "Win32_Foundation",
-    "Win32_System_Memory",
     "Win32_System_Threading",
-    "Win32_System_Diagnostics_Debug",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_LibraryLoader",
     "Win32_UI_WindowsAndMessaging",
@@ -20,11 +23,10 @@ windows = { version = "0.60.0", features = [
     "Win32_UI_Shell",
     "Win32_Security"
 ] }
-image = "0.24"
+image = { version = "0.25", default-features = false, features = ["png"] }
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-chrono = "0.4"
+ron = "0.12"
 
 [build-dependencies]
-winres = "0.1.12"
+winresource = { version = "0.1.31", default-features = false }
