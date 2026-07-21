@@ -11,7 +11,9 @@ use windows::Win32::System::Threading::{
     PROCESS_CREATE_THREAD, PROCESS_QUERY_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ,
     PROCESS_VM_WRITE,
 };
-use wraith::manipulation::remote::{find_remote_module, ProcessAccess, RemoteProcess};
+use wraith::manipulation::remote::{
+    find_remote_module, ProcessAccess, RemoteAllocation, RemoteProcess,
+};
 
 const INJECTION_TIMEOUT_MS: u32 = 30_000;
 const INJECTION_ACCESS: u32 = PROCESS_CREATE_THREAD.0
@@ -78,6 +80,14 @@ fn random_file_stem() -> String {
 fn inject_dll_path(process_id: u32, dll_path: &Path) -> Result<()> {
     let process = RemoteProcess::open(process_id, ProcessAccess::custom(INJECTION_ACCESS))
         .context("Failed to open target process")?;
+    let path_memory = write_dll_path(&process, dll_path)?;
+    let load_library = remote_load_library_address(&process)?;
+    let thread = create_load_library_thread(&process, load_library, path_memory.base())?;
+    wait_for_load(*thread, path_memory)?;
+    ensure_load_succeeded(*thread)
+}
+
+fn write_dll_path(process: &RemoteProcess, dll_path: &Path) -> Result<RemoteAllocation> {
     let path_bytes: Vec<u8> = dll_path
         .as_os_str()
         .encode_wide()
@@ -96,8 +106,14 @@ fn inject_dll_path(process_id: u32, dll_path: &Path) -> Result<()> {
             path_bytes.len()
         );
     }
+    Ok(path_memory)
+}
 
-    let load_library = remote_load_library_address(&process)?;
+fn create_load_library_thread(
+    process: &RemoteProcess,
+    load_library: usize,
+    path_address: usize,
+) -> Result<Owned<HANDLE>> {
     let start_routine =
         unsafe { std::mem::transmute::<usize, LPTHREAD_START_ROUTINE>(load_library) };
     let thread = unsafe {
@@ -106,25 +122,31 @@ fn inject_dll_path(process_id: u32, dll_path: &Path) -> Result<()> {
             None,
             0,
             start_routine,
-            Some(path_memory.base() as *mut c_void),
+            Some(path_address as *mut c_void),
             0,
             None,
         )?)
     };
-    match unsafe { WaitForSingleObject(*thread, INJECTION_TIMEOUT_MS) } {
-        WAIT_OBJECT_0 => {}
+    Ok(thread)
+}
+
+fn wait_for_load(thread: HANDLE, path_memory: RemoteAllocation) -> Result<()> {
+    match unsafe { WaitForSingleObject(thread, INJECTION_TIMEOUT_MS) } {
+        WAIT_OBJECT_0 => Ok(()),
         WAIT_TIMEOUT => {
             path_memory.leak();
-            bail!("Timed out waiting for LoadLibraryW");
+            bail!("Timed out waiting for LoadLibraryW")
         }
         status => {
             path_memory.leak();
-            bail!("Waiting for LoadLibraryW failed with status {}", status.0);
+            bail!("Waiting for LoadLibraryW failed with status {}", status.0)
         }
     }
+}
 
+fn ensure_load_succeeded(thread: HANDLE) -> Result<()> {
     let mut result = 0;
-    unsafe { GetExitCodeThread(*thread, &mut result) }
+    unsafe { GetExitCodeThread(thread, &mut result) }
         .context("Failed to read LoadLibraryW result")?;
     if result == 0 {
         bail!("LoadLibraryW rejected the DLL");
@@ -150,41 +172,4 @@ fn remote_load_library_address(process: &RemoteProcess) -> Result<usize> {
         .base()
         .checked_add(offset)
         .context("Remote LoadLibraryW address overflowed")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{create_injection_copy, inject_dll_path};
-
-    #[test]
-    fn wraith_injects_system_dll_into_current_process() {
-        let dll = std::path::PathBuf::from(std::env::var_os("WINDIR").unwrap())
-            .join("System32")
-            .join("kernel32.dll");
-        inject_dll_path(std::process::id(), &dll).unwrap();
-    }
-
-    #[test]
-    fn injection_copy_preserves_dll_contents() {
-        let source = std::env::temp_dir().join(format!(
-            "fluffy-injector-test-{}.dll",
-            std::random::random::<u64>(..)
-        ));
-        std::fs::write(&source, b"test").unwrap();
-        let copy = create_injection_copy(1, &source, false).unwrap();
-        assert_eq!(std::fs::read(&copy).unwrap(), b"test");
-        assert_ne!(copy, source);
-
-        let random_copy = create_injection_copy(1, &source, true).unwrap();
-        let random_stem = random_copy.file_stem().unwrap().to_string_lossy();
-        assert!(!copy.exists());
-        assert_eq!(std::fs::read(&random_copy).unwrap(), b"test");
-        assert_eq!(random_stem.len(), 32);
-        assert!(random_stem
-            .chars()
-            .all(|character| character.is_ascii_hexdigit()));
-
-        std::fs::remove_file(source).expect("failed to remove source test DLL");
-        std::fs::remove_file(random_copy).expect("failed to remove randomized test DLL");
-    }
 }

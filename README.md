@@ -63,13 +63,13 @@ The goal is to make `DLL injection` accessible and straightforward without sacri
 
 ### For Users (Recommended)
 
-1.  **Download:** Grab `fluffy-injector-windows-x64` from the latest successful [**GitHub Actions build**](https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml) or download `fluffy_injector.exe` from a published [**GitHub Release**](https://github.com/fluffysnaff/fluffy-injector/releases).
+1.  **Download:** Grab `release-build` from the latest successful [**GitHub Actions build**](https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml) or download `fluffy_injector.exe` from a published [**GitHub Release**](https://github.com/fluffysnaff/fluffy-injector/releases).
 2.  **Run:** Place the executable in a folder of your choice and run it. No installation is required.
 3.  **Inject:**
     *   Select a target process from the left panel.
     *   Click "Add DLL" to add your desired DLL to the list in the right panel.
     *   Select the DLL you just added.
-    *   Click "Inject DLL"!
+    *   Click "Inject"!
 
 ### For Developers (Building from Source)
 

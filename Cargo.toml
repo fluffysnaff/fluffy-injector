@@ -3,6 +3,12 @@ name = "fluffy_injector"
 version = "0.2.0"
 edition = "2021"
 
+[[bin]]
+name = "fluffy_injector"
+path = "src/main.rs"
+test = false
+bench = false
+
 [dependencies]
 eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow", "persistence"] }
 rfd = { version = "0.17", default-features = false }

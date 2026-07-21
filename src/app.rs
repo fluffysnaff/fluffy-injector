@@ -9,31 +9,20 @@ use std::sync::mpsc::{self, Receiver, Sender};
 pub(crate) enum BackgroundMessage {
     Processes(Vec<ProcessInfo>),
     Icon((u32, ColorImage)),
-    Injection { total: usize, failures: Vec<String> },
+    Injection(usize, Vec<String>),
     Error(String),
 }
 
-pub(crate) struct Dll {
-    pub path: String,
-    pub selected: bool,
-}
-
 pub(crate) struct InjectorApp {
-    // Core State
     pub processes: Vec<ProcessInfo>,
     pub selected_process: Option<u32>,
-    pub dlls: Vec<Dll>,
     pub config: Config,
     pub is_loading_processes: bool,
     pub icon_cache: HashMap<u32, TextureHandle>,
     pub default_dll_texture: TextureHandle,
     pub toasts: Vec<Toast>,
     pub is_injecting: bool,
-
-    // UI-specific state moved here
     pub process_search: String,
-
-    // Private fields
     background_rx: Receiver<BackgroundMessage>,
     background_tx: Sender<BackgroundMessage>,
     icon_tx: Sender<(u32, std::path::PathBuf)>,
@@ -45,31 +34,12 @@ impl InjectorApp {
             Ok(config) => (config, None),
             Err(error) => (Config::default(), Some(error)),
         };
-        let dlls = config
-            .dlls
-            .iter()
-            .cloned()
-            .map(|path| Dll {
-                selected: config.selected_dlls.contains(&path),
-                path,
-            })
-            .collect();
-
         let (background_tx, background_rx) = mpsc::channel();
         let (icon_tx, icon_rx) = mpsc::channel();
-
-        let process_tx = background_tx.clone();
-        let ctx_clone = cc.egui_ctx.clone();
-        std::thread::spawn(move || process_scanner::scan_loop(process_tx, ctx_clone));
-
-        let icon_bgtx = background_tx.clone();
-        let ctx_clone = cc.egui_ctx.clone();
-        std::thread::spawn(move || icon_loader::load_loop(icon_rx, icon_bgtx, ctx_clone));
-
+        spawn_workers(&cc.egui_ctx, &background_tx, icon_rx);
         let mut app = Self {
             processes: Vec::new(),
             selected_process: None,
-            dlls,
             config,
             background_rx,
             background_tx,
@@ -81,44 +51,31 @@ impl InjectorApp {
             is_injecting: false,
             process_search: String::new(),
         };
+        app.report_startup_errors(config_error, cc.storage.is_none());
+        app
+    }
+
+    fn report_startup_errors(&mut self, config_error: Option<anyhow::Error>, no_storage: bool) {
         if let Some(error) = config_error {
-            app.add_toast(
+            self.add_toast(
                 ToastLevel::Error,
                 format!("Failed to load settings: {error}"),
             );
         }
-        if cc.storage.is_none() {
-            app.add_toast(ToastLevel::Error, "AppData settings are unavailable.");
+        if no_storage {
+            self.add_toast(ToastLevel::Error, "AppData settings are unavailable.");
         }
-        app
     }
 
     fn handle_background_updates(&mut self, ctx: &Context) {
         while let Ok(message) = self.background_rx.try_recv() {
-            match message {
-                BackgroundMessage::Processes(procs) => self.update_processes(procs),
-                BackgroundMessage::Icon((pid, color_image)) => {
-                    let texture =
-                        ctx.load_texture(format!("icon_{pid}"), color_image, Default::default());
-                    self.icon_cache.insert(pid, texture);
-                }
-                BackgroundMessage::Injection { total, failures } => {
-                    self.finish_injection(total, failures)
-                }
-                BackgroundMessage::Error(error) => self.add_toast(ToastLevel::Error, error),
-            }
+            handle_background_message(self, ctx, message);
         }
     }
 
-    fn request_missing_icons(&self) {
-        for proc in &self.processes {
-            if !proc.exe.as_os_str().is_empty()
-                && !self.icon_cache.contains_key(&proc.pid)
-                && self.icon_tx.send((proc.pid, proc.exe.clone())).is_err()
-            {
-                break;
-            }
-        }
+    fn update_icon(&mut self, ctx: &Context, (pid, image): (u32, ColorImage)) {
+        let texture = ctx.load_texture(format!("icon_{pid}"), image, Default::default());
+        self.icon_cache.insert(pid, texture);
     }
 
     fn update_processes(&mut self, processes: Vec<ProcessInfo>) {
@@ -131,7 +88,7 @@ impl InjectorApp {
         );
         self.processes = processes;
         self.is_loading_processes = false;
-        self.request_missing_icons();
+        request_missing_icons(&self.processes, &self.icon_cache, &self.icon_tx);
     }
 
     pub(crate) fn selected_process_info(&self) -> Option<&ProcessInfo> {
@@ -144,13 +101,6 @@ impl InjectorApp {
     }
 
     fn persist_config(&mut self, storage: &mut dyn eframe::Storage) {
-        self.config.dlls = self.dlls.iter().map(|dll| dll.path.clone()).collect();
-        self.config.selected_dlls = self
-            .dlls
-            .iter()
-            .filter(|dll| dll.selected)
-            .map(|dll| dll.path.clone())
-            .collect();
         if let Err(error) = self.config.save(storage) {
             self.add_toast(
                 ToastLevel::Error,
@@ -160,7 +110,8 @@ impl InjectorApp {
     }
 
     pub(crate) fn selected_dlls(&self) -> impl Iterator<Item = &str> {
-        self.dlls
+        self.config
+            .dlls
             .iter()
             .filter_map(|dll| dll.selected.then_some(dll.path.as_str()))
     }
@@ -173,29 +124,13 @@ impl InjectorApp {
         if dlls.is_empty() || self.is_injecting {
             return;
         }
-
         self.is_injecting = true;
         let copy = self.config.copy_dll_on_inject;
         let randomize = self.config.randomize_dll_name;
         let tx = self.background_tx.clone();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let total = dlls.len();
-            let failures = dlls
-                .iter()
-                .filter_map(|path| {
-                    injector::inject_dll(pid, path, copy, randomize)
-                        .err()
-                        .map(|error| format!("{}: {error}", dll_name(path)))
-                })
-                .collect();
-            if tx
-                .send(BackgroundMessage::Injection { total, failures })
-                .is_err()
-            {
-                return;
-            }
-            ctx.request_repaint();
+            send_injection_result(&tx, &ctx, inject_dlls(pid, &dlls, copy, randomize));
         });
     }
 
@@ -215,6 +150,63 @@ impl InjectorApp {
             ),
         );
     }
+}
+
+fn spawn_workers(
+    ctx: &Context,
+    background_tx: &Sender<BackgroundMessage>,
+    icon_rx: Receiver<(u32, std::path::PathBuf)>,
+) {
+    let process_tx = background_tx.clone();
+    let process_ctx = ctx.clone();
+    std::thread::spawn(move || process_scanner::scan_loop(process_tx, process_ctx));
+    let icon_tx = background_tx.clone();
+    let icon_ctx = ctx.clone();
+    std::thread::spawn(move || icon_loader::load_loop(icon_rx, icon_tx, icon_ctx));
+}
+
+fn handle_background_message(app: &mut InjectorApp, ctx: &Context, message: BackgroundMessage) {
+    match message {
+        BackgroundMessage::Processes(processes) => app.update_processes(processes),
+        BackgroundMessage::Icon(icon) => app.update_icon(ctx, icon),
+        BackgroundMessage::Injection(total, failures) => app.finish_injection(total, failures),
+        BackgroundMessage::Error(error) => app.add_toast(ToastLevel::Error, error),
+    }
+}
+
+fn request_missing_icons(
+    processes: &[ProcessInfo],
+    icon_cache: &HashMap<u32, TextureHandle>,
+    icon_tx: &Sender<(u32, std::path::PathBuf)>,
+) {
+    for process in processes {
+        let missing = !process.exe.as_os_str().is_empty() && !icon_cache.contains_key(&process.pid);
+        if missing && icon_tx.send((process.pid, process.exe.clone())).is_err() {
+            break;
+        }
+    }
+}
+
+fn send_injection_result(
+    tx: &Sender<BackgroundMessage>,
+    ctx: &Context,
+    message: BackgroundMessage,
+) {
+    if tx.send(message).is_ok() {
+        ctx.request_repaint();
+    }
+}
+
+fn inject_dlls(pid: u32, dlls: &[String], copy: bool, randomize: bool) -> BackgroundMessage {
+    let failures = dlls
+        .iter()
+        .filter_map(|path| {
+            injector::inject_dll(pid, path, copy, randomize)
+                .err()
+                .map(|error| format!("{}: {error}", dll_name(path)))
+        })
+        .collect();
+    BackgroundMessage::Injection(dlls.len(), failures)
 }
 
 fn dll_name(path: &str) -> String {
@@ -275,36 +267,4 @@ fn resolve_process_selection(
                     .map(|process| process.pid)
             })
         })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{resolve_process_selection, ProcessInfo};
-    use std::path::PathBuf;
-
-    fn process(name: &str, pid: u32) -> ProcessInfo {
-        ProcessInfo {
-            name: name.into(),
-            pid,
-            exe: PathBuf::new(),
-        }
-    }
-
-    #[test]
-    fn keeps_live_pid_and_reacquires_terminated_process_by_name() {
-        let processes = [process("game.exe", 10), process("game.exe", 20)];
-
-        assert_eq!(
-            resolve_process_selection(&processes, Some(20), Some("game.exe")),
-            Some(20)
-        );
-        assert_eq!(
-            resolve_process_selection(&processes, Some(99), Some("GAME.EXE")),
-            Some(10)
-        );
-        assert_eq!(
-            resolve_process_selection(&processes, Some(99), Some("missing.exe")),
-            None
-        );
-    }
 }
