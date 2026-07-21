@@ -221,8 +221,13 @@ impl eframe::App for InjectorApp {
         }
     }
 
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        self.persist_config(storage);
+    /// Persist on change via [`Self::ui`] and frequent autosave (window placement).
+    /// Do not rely on graceful shutdown — End Task never reaches close handlers.
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {}
+
+    fn auto_save_interval(&self) -> std::time::Duration {
+        // Frequent enough for End Task; not every frame (avoids saving mid-DPI restore).
+        std::time::Duration::from_millis(500)
     }
 
     fn persist_egui_memory(&self) -> bool {

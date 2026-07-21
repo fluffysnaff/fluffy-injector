@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const DEFAULT_WINDOW_SIZE: [f32; 2] = [800.0, 600.0];
 pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [600.0, 400.0];
+pub(crate) const APP_NAME: &str = "Fluffy Injector";
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(crate) struct Config {

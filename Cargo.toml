@@ -10,7 +10,7 @@ test = false
 bench = false
 
 [dependencies]
-eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow", "persistence"] }
+eframe = { git = "https://github.com/Dvow/egui", branch = "main", default-features = false, features = ["default_fonts", "glow", "persistence"] }
 rfd = { version = "0.17", default-features = false }
 wraith-rs = { version = "0.1.8", default-features = false, features = ["std", "remote"] }
 windows = { version = "0.62", features = [
