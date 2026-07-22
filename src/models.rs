@@ -20,6 +20,10 @@ pub(crate) struct Config {
     /// Fraction of the body width used by the process list (0..=1).
     #[serde(default = "default_split_ratio")]
     pub split_ratio: f32,
+    #[serde(default)]
+    pub favorites: Vec<String>,
+    #[serde(default)]
+    pub blocked: Vec<String>,
 }
 
 fn default_split_ratio() -> f32 {
@@ -34,6 +38,8 @@ impl Default for Config {
             copy_dll_on_inject: false,
             randomize_dll_name: false,
             split_ratio: DEFAULT_SPLIT_RATIO,
+            favorites: Vec::new(),
+            blocked: Vec::new(),
         }
     }
 }
@@ -57,6 +63,30 @@ impl Config {
         storage.set_string(APP_KEY, data);
         storage.flush();
         Ok(())
+    }
+
+    pub(crate) fn is_favorite(&self, name: &str) -> bool {
+        self.favorites.iter().any(|entry| entry.eq_ignore_ascii_case(name))
+    }
+
+    pub(crate) fn is_blocked(&self, name: &str) -> bool {
+        self.blocked.iter().any(|entry| entry.eq_ignore_ascii_case(name))
+    }
+
+    pub(crate) fn toggle_favorite(&mut self, name: &str) {
+        if let Some(index) = self.favorites.iter().position(|entry| entry.eq_ignore_ascii_case(name))
+        {
+            self.favorites.remove(index);
+            return;
+        }
+        self.favorites.push(name.to_owned());
+    }
+
+    pub(crate) fn block_process(&mut self, name: &str) {
+        self.favorites.retain(|entry| !entry.eq_ignore_ascii_case(name));
+        if !self.is_blocked(name) {
+            self.blocked.push(name.to_owned());
+        }
     }
 }
 

@@ -60,17 +60,24 @@ impl InjectorApp {
         self.icon_cache.insert(pid, texture);
     }
 
-    fn update_processes(&mut self, processes: Vec<ProcessInfo>) {
+    fn update_processes(&mut self, mut processes: Vec<ProcessInfo>) {
         let live_pids: HashSet<u32> = processes.iter().map(|process| process.pid).collect();
         self.icon_cache.retain(|pid, _| live_pids.contains(pid));
-        self.selected_process = resolve_process_selection(
-            &processes,
-            self.selected_process,
-            self.config.last_selected_app.as_deref(),
-        );
+        order_by_favorite(&mut processes, &self.config);
+        let last_selected = self
+            .config
+            .last_selected_app
+            .as_deref()
+            .filter(|name| !self.config.is_blocked(name));
+        self.selected_process =
+            resolve_process_selection(&processes, self.selected_process, last_selected);
         self.processes = processes;
         self.is_loading_processes = false;
         request_missing_icons(&self.processes, &self.icon_cache, &self.icon_tx);
+    }
+
+    pub(crate) fn order_processes_by_favorite(&mut self) {
+        order_by_favorite(&mut self.processes, &self.config);
     }
 
     pub(crate) fn selected_process_info(&self) -> Option<&ProcessInfo> {
@@ -232,6 +239,18 @@ impl eframe::App for InjectorApp {
     fn persist_egui_memory(&self) -> bool {
         false
     }
+}
+
+fn order_by_favorite(processes: &mut [ProcessInfo], config: &Config) {
+    if config.favorites.is_empty() {
+        return;
+    }
+    processes.sort_by(|left, right| {
+        config
+            .is_favorite(&right.name)
+            .cmp(&config.is_favorite(&left.name))
+            .then_with(|| left.cmp(right))
+    });
 }
 
 fn resolve_process_selection(

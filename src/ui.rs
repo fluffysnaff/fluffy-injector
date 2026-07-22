@@ -1,5 +1,5 @@
 use crate::app::InjectorApp;
-use crate::models::{Dll, ProcessInfo, Toast, ToastLevel};
+use crate::models::{Dll, Toast, ToastLevel};
 use eframe::egui::{
     self, Color32, CursorIcon, Frame, Id, Margin, Pos2, Rect, RichText, Sense, Stroke, TextEdit,
     TextureHandle, UiBuilder, Vec2, Visuals,
@@ -220,18 +220,103 @@ fn draw_process_list(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
         return false;
     }
 
-    let search = app.process_search.to_lowercase();
+    let search = app.process_search.to_ascii_lowercase();
     let mut selection = None;
+    let mut menu_action = None;
     for process in &app.processes {
-        if !search.is_empty() && !process.name.to_lowercase().contains(&search) {
+        if app.config.is_blocked(&process.name) {
             continue;
         }
-        let selected = app.selected_process == Some(process.pid);
-        if draw_process_row(ui, process, app.icon_cache.get(&process.pid), selected) {
-            selection = Some((process.pid, process.name.clone()));
+        if !search.is_empty() && !ascii_contains_ignore_case(&process.name, &search) {
+            continue;
         }
+        let favorite = app.config.is_favorite(&process.name);
+        let selected = app.selected_process == Some(process.pid);
+        let response = draw_process_row(
+            ui,
+            &process.name,
+            process.pid,
+            app.icon_cache.get(&process.pid),
+            selected,
+            favorite,
+        );
+        if response.clicked() {
+            selection = Some(process.pid);
+        }
+        process_row_menu(&response, process.pid, favorite, &mut menu_action);
     }
-    let Some((pid, name)) = selection else {
+    apply_process_menu_action(app, menu_action) | apply_process_selection(app, selection)
+}
+
+fn ascii_contains_ignore_case(haystack: &str, needle_lower: &str) -> bool {
+    if needle_lower.is_empty() {
+        return true;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle_lower.len())
+        .any(|window| window.eq_ignore_ascii_case(needle_lower.as_bytes()))
+}
+
+fn process_row_menu(
+    response: &egui::Response,
+    pid: u32,
+    favorite: bool,
+    menu_action: &mut Option<ProcessMenuAction>,
+) {
+    response.context_menu(|ui| {
+        let favorite_label = if favorite { "Unfavorite" } else { "Favorite" };
+        if ui.button(favorite_label).clicked() {
+            *menu_action = Some(ProcessMenuAction::ToggleFavorite(pid));
+            ui.close();
+        }
+        if ui.button("Block from list").clicked() {
+            *menu_action = Some(ProcessMenuAction::Block(pid));
+            ui.close();
+        }
+    });
+}
+
+enum ProcessMenuAction {
+    ToggleFavorite(u32),
+    Block(u32),
+}
+
+fn process_name_by_pid(app: &InjectorApp, pid: u32) -> Option<String> {
+    app.processes
+        .iter()
+        .find(|process| process.pid == pid)
+        .map(|process| process.name.clone())
+}
+
+fn apply_process_menu_action(app: &mut InjectorApp, action: Option<ProcessMenuAction>) -> bool {
+    let Some(action) = action else {
+        return false;
+    };
+    let (pid, block) = match action {
+        ProcessMenuAction::ToggleFavorite(pid) => (pid, false),
+        ProcessMenuAction::Block(pid) => (pid, true),
+    };
+    let Some(name) = process_name_by_pid(app, pid) else {
+        return false;
+    };
+    if block {
+        if app.selected_process == Some(pid) {
+            app.selected_process = None;
+        }
+        app.config.block_process(&name);
+    } else {
+        app.config.toggle_favorite(&name);
+        app.order_processes_by_favorite();
+    }
+    true
+}
+
+fn apply_process_selection(app: &mut InjectorApp, selection: Option<u32>) -> bool {
+    let Some(pid) = selection else {
+        return false;
+    };
+    let Some(name) = process_name_by_pid(app, pid) else {
         return false;
     };
     app.selected_process = Some(pid);
@@ -241,28 +326,67 @@ fn draw_process_list(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
 
 fn draw_process_row(
     ui: &mut egui::Ui,
-    process: &ProcessInfo,
+    name: &str,
+    pid: u32,
     texture: Option<&TextureHandle>,
     selected: bool,
-) -> bool {
+    favorite: bool,
+) -> egui::Response {
     let height = ui.spacing().interact_size.y.max(22.0);
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click());
-    paint_row_bg(ui, rect, selected, response.hovered());
+    paint_row_bg(ui, rect, selected, response.hovered() || response.context_menu_opened());
     ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
         ui.set_clip_rect(ui.clip_rect().intersect(rect));
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            row_icon(ui, texture);
-            ui.add_space(6.0);
-            ui.add(
-                egui::Label::new(format!("{}  ({})", process.name, process.pid))
-                    .truncate()
-                    .selectable(false)
-                    .sense(Sense::hover()),
-            );
+            paint_process_row_contents(ui, name, pid, texture, favorite);
         });
     });
-    response.clicked()
+    response
+}
+
+fn paint_process_row_contents(
+    ui: &mut egui::Ui,
+    name: &str,
+    pid: u32,
+    texture: Option<&TextureHandle>,
+    favorite: bool,
+) {
+    row_icon(ui, texture);
+    ui.add_space(6.0);
+    if favorite {
+        ui.label(RichText::new("★").strong());
+        ui.add_space(4.0);
+    }
+    ui.add(
+        egui::Label::new(name)
+            .truncate()
+            .selectable(false)
+            .sense(Sense::hover()),
+    );
+    ui.add_space(4.0);
+    let mut pid_buf = [0u8; 14];
+    ui.label(RichText::new(pid_in_parens(pid, &mut pid_buf)).color(Color32::from_gray(160)));
+}
+
+fn pid_in_parens(pid: u32, buf: &mut [u8; 14]) -> &str {
+    let mut digits = [0u8; 10];
+    let mut value = pid;
+    let mut count = 0;
+    loop {
+        digits[count] = b'0' + (value % 10) as u8;
+        count += 1;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    buf[0] = b'(';
+    for index in 0..count {
+        buf[1 + index] = digits[count - 1 - index];
+    }
+    buf[1 + count] = b')';
+    std::str::from_utf8(&buf[..2 + count]).unwrap_or("()")
 }
 
 fn paint_row_bg(ui: &egui::Ui, rect: Rect, selected: bool, hovered: bool) {
