@@ -1,4 +1,4 @@
-name: Rust Auto Builder
+﻿name: Rust Auto Builder
 
 on:
   push:
@@ -18,7 +18,7 @@ jobs:
       - name: Build release
         run: cargo build --release
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: release-build
           path: target/release/fluffy_injector.exe
