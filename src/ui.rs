@@ -1,118 +1,29 @@
-mod dll_panel;
-mod process_panel;
-
 use crate::app::InjectorApp;
+use crate::models::config::Dll;
+use crate::models::process::ProcessInfo;
 use crate::models::toast::{Toast, ToastLevel};
 use eframe::egui::{
-    self, Color32, CursorIcon, Frame, Id, Margin, Pos2, Rect, RichText, Sense, Stroke, UiBuilder,
-    Vec2, Visuals,
+    self, Color32, CursorIcon, Frame, Id, Margin, Pos2, Rect, RichText, Sense, Stroke, TextEdit,
+    TextureHandle, UiBuilder, Vec2, Visuals,
 };
+use std::path::Path;
 
-pub(crate) const SURFACE: Color32 = Color32::from_rgb(28, 28, 28);
-pub(crate) const SURFACE_RAISED: Color32 = Color32::from_rgb(36, 36, 36);
-pub(crate) const RULE: Color32 = Color32::from_rgb(58, 58, 58);
+const SURFACE: Color32 = Color32::from_rgb(28, 28, 28);
+const SURFACE_RAISED: Color32 = Color32::from_rgb(36, 36, 36);
+const RULE: Color32 = Color32::from_rgb(58, 58, 58);
 const PANEL_MIN: f32 = 140.0;
 const HANDLE_HIT: f32 = 8.0;
+const INSET: f32 = 12.0;
 
 pub(crate) fn show(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
-    apply_theme(ui.ctx());
     ui.painter().rect_filled(ui.max_rect(), 0.0, SURFACE);
-
-    let mut changed = false;
     draw_status_bar(ui, app);
-    changed |= draw_split_body(ui, app);
+    let changed = draw_split_body(ui, app);
     draw_toasts(ui.ctx(), app);
     changed
 }
 
-fn draw_split_body(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
-    let mut changed = false;
-    let full = ui.available_rect_before_wrap();
-    ui.allocate_rect(full, Sense::hover());
-
-    let left_width = resolved_left_width(full.width(), app.config.split_ratio);
-    let left_rect = Rect::from_min_size(full.min, Vec2::new(left_width, full.height()));
-    let right_rect = Rect::from_min_max(Pos2::new(full.min.x + left_width, full.min.y), full.max);
-
-    changed |= show_process_side(ui, app, left_rect);
-    changed |= show_dll_side(ui, app, right_rect);
-    ui.painter()
-        .vline(left_rect.max.x, full.y_range(), Stroke::new(1.0, RULE));
-    // Handle last so it wins pointer hits over the side panes.
-    changed |= drag_split_handle(ui, app, full, left_width);
-    changed
-}
-
-fn show_process_side(ui: &mut egui::Ui, app: &mut InjectorApp, rect: Rect) -> bool {
-    let mut changed = false;
-    with_side_pane(ui, rect, |ui| changed |= process_panel::show(ui, app));
-    changed
-}
-
-fn show_dll_side(ui: &mut egui::Ui, app: &mut InjectorApp, rect: Rect) -> bool {
-    let mut changed = false;
-    with_side_pane(ui, rect, |ui| changed |= dll_panel::show(ui, app));
-    changed
-}
-
-fn with_side_pane(ui: &mut egui::Ui, rect: Rect, add_contents: impl FnOnce(&mut egui::Ui)) {
-    ui.scope_builder(
-        UiBuilder::new()
-            .max_rect(rect)
-            .layout(egui::Layout::top_down_justified(egui::Align::Min)),
-        |ui| {
-            ui.set_clip_rect(rect);
-            fill_panel(ui);
-            Frame::NONE
-                .inner_margin(Margin::same(12))
-                .show(ui, |ui| {
-                    // Claim the full pane so ScrollArea width follows the edge, not content.
-                    ui.set_min_size(ui.available_size());
-                    add_contents(ui);
-                });
-        },
-    );
-}
-
-fn resolved_left_width(total: f32, ratio: f32) -> f32 {
-    let max = (total - PANEL_MIN).max(PANEL_MIN);
-    (total * ratio).clamp(PANEL_MIN, max)
-}
-
-fn drag_split_handle(ui: &mut egui::Ui, app: &mut InjectorApp, full: Rect, left_width: f32) -> bool {
-    let handle = Rect::from_center_size(
-        Pos2::new(full.min.x + left_width, full.center().y),
-        Vec2::new(HANDLE_HIT, full.height()),
-    );
-    let response = ui.interact(handle, Id::new("split_handle"), Sense::drag());
-    if response.hovered() || response.dragged() {
-        ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
-    }
-    if !response.dragged() {
-        return false;
-    }
-    let Some(pointer) = response.interact_pointer_pos() else {
-        return false;
-    };
-    let max = (full.width() - PANEL_MIN).max(PANEL_MIN);
-    let width = (pointer.x - full.min.x).clamp(PANEL_MIN, max);
-    app.config.split_ratio = width / full.width().max(1.0);
-    true
-}
-
-pub(crate) fn fill_panel(ui: &mut egui::Ui) {
-    ui.painter().rect_filled(ui.max_rect(), 0.0, SURFACE);
-}
-
-pub(crate) fn rule_separator(ui: &mut egui::Ui) {
-    let stroke = Stroke::new(1.0, RULE);
-    let y = ui.cursor().min.y + 0.5;
-    let x_range = ui.max_rect().x_range();
-    ui.painter().hline(x_range, y, stroke);
-    ui.add_space(1.0);
-}
-
-fn apply_theme(ctx: &egui::Context) {
+pub(crate) fn apply_theme(ctx: &egui::Context) {
     let mut visuals = Visuals::dark();
     visuals.window_fill = SURFACE;
     visuals.panel_fill = SURFACE;
@@ -131,6 +42,83 @@ fn apply_theme(ctx: &egui::Context) {
         scroll.bar_width = 10.0;
         style.spacing.scroll = scroll;
     });
+}
+
+fn filled_scroll<R>(ui: &mut egui::Ui, id: &'static str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let size = ui.available_size();
+    egui::ScrollArea::vertical()
+        .id_salt(id)
+        .auto_shrink([false, false])
+        .max_width(size.x)
+        .max_height(size.y)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            add(ui)
+        })
+        .inner
+}
+
+fn rule_separator(ui: &mut egui::Ui) {
+    let y = ui.cursor().min.y + 0.5;
+    ui.painter()
+        .hline(ui.max_rect().x_range(), y, Stroke::new(1.0, RULE));
+    ui.add_space(1.0);
+}
+
+fn draw_split_body(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
+    let full = ui.available_rect_before_wrap();
+    ui.allocate_rect(full, Sense::hover());
+
+    let left_w = resolved_left_width(full.width(), app.config.split_ratio);
+    let left = Rect::from_min_size(full.min, Vec2::new(left_w, full.height()));
+    let right = Rect::from_min_max(Pos2::new(full.min.x + left_w, full.min.y), full.max);
+
+    let mut changed = side_pane(ui, left, |ui| draw_process_panel(ui, app));
+    changed |= side_pane(ui, right, |ui| draw_dll_panel(ui, app));
+    ui.painter()
+        .vline(left.max.x, full.y_range(), Stroke::new(1.0, RULE));
+    changed |= drag_split_handle(ui, app, full, left_w);
+    changed
+}
+
+fn side_pane(ui: &mut egui::Ui, rect: Rect, add: impl FnOnce(&mut egui::Ui) -> bool) -> bool {
+    ui.scope_builder(
+        UiBuilder::new()
+            .max_rect(rect.shrink(INSET))
+            .layout(egui::Layout::top_down_justified(egui::Align::Min)),
+        |ui| {
+            ui.set_clip_rect(rect);
+            ui.set_min_size(ui.available_size());
+            add(ui)
+        },
+    )
+    .inner
+}
+
+fn resolved_left_width(total: f32, ratio: f32) -> f32 {
+    let max = (total - PANEL_MIN).max(PANEL_MIN);
+    (total * ratio).clamp(PANEL_MIN, max)
+}
+
+fn drag_split_handle(ui: &mut egui::Ui, app: &mut InjectorApp, full: Rect, left_w: f32) -> bool {
+    let handle = Rect::from_center_size(
+        Pos2::new(full.min.x + left_w, full.center().y),
+        Vec2::new(HANDLE_HIT, full.height()),
+    );
+    let response = ui.interact(handle, Id::new("split_handle"), Sense::drag());
+    if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
+    }
+    if !response.dragged() {
+        return false;
+    }
+    let Some(pointer) = response.interact_pointer_pos() else {
+        return false;
+    };
+    let max = (full.width() - PANEL_MIN).max(PANEL_MIN);
+    let width = (pointer.x - full.min.x).clamp(PANEL_MIN, max);
+    app.config.split_ratio = width / full.width().max(1.0);
+    true
 }
 
 fn draw_status_bar(ui: &mut egui::Ui, app: &InjectorApp) {
@@ -152,9 +140,9 @@ fn draw_status_bar(ui: &mut egui::Ui, app: &InjectorApp) {
 fn draw_status_contents(ui: &mut egui::Ui, app: &InjectorApp) {
     ui.label(RichText::new(process_status(app)).size(14.0).strong());
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let dll_count = app.selected_dlls().count();
+        let count = app.selected_dlls().count();
         ui.label(
-            RichText::new(format!("DLLs selected: {dll_count}"))
+            RichText::new(format!("DLLs selected: {count}"))
                 .size(14.0)
                 .color(Color32::from_rgb(140, 190, 255)),
         );
@@ -174,7 +162,7 @@ fn process_status(app: &InjectorApp) -> String {
 }
 
 fn draw_toasts(ctx: &egui::Context, app: &mut InjectorApp) {
-    app.toasts.retain(|toast| toast.is_alive());
+    app.toasts.retain(Toast::is_alive);
     egui::Area::new("toasts".into())
         .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-12.0, -12.0))
         .show(ctx, |ui| {
@@ -198,4 +186,232 @@ fn draw_toast(ui: &mut egui::Ui, toast: &Toast) {
             ui.set_min_width(220.0);
             ui.label(RichText::new(format!("{prefix}: {}", toast.message)).color(color));
         });
+}
+
+fn draw_process_panel(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
+    ui.label(RichText::new("Processes").size(15.0).strong());
+    ui.add_space(8.0);
+    ui.add(
+        TextEdit::singleline(&mut app.process_search)
+            .hint_text("Filter by name…")
+            .desired_width(f32::INFINITY)
+            .background_color(Color32::from_rgb(16, 16, 16)),
+    );
+    ui.add_space(10.0);
+    filled_scroll(ui, "process_list", |ui| draw_process_list(ui, app))
+}
+
+fn draw_process_list(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
+    if app.is_loading_processes && app.processes.is_empty() {
+        ui.vertical_centered(|ui| {
+            ui.add_space(24.0);
+            ui.add(egui::Spinner::new());
+        });
+        return false;
+    }
+
+    let search = app.process_search.to_lowercase();
+    let mut selection = None;
+    for process in &app.processes {
+        if !search.is_empty() && !process.name.to_lowercase().contains(&search) {
+            continue;
+        }
+        let selected = app.selected_process == Some(process.pid);
+        if draw_process_row(ui, process, app.icon_cache.get(&process.pid), selected) {
+            selection = Some((process.pid, process.name.clone()));
+        }
+    }
+    let Some((pid, name)) = selection else {
+        return false;
+    };
+    app.selected_process = Some(pid);
+    app.config.last_selected_app = Some(name);
+    true
+}
+
+fn draw_process_row(
+    ui: &mut egui::Ui,
+    process: &ProcessInfo,
+    texture: Option<&TextureHandle>,
+    selected: bool,
+) -> bool {
+    let height = ui.spacing().interact_size.y.max(22.0);
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click());
+    paint_row_bg(ui, rect, selected, response.hovered());
+    ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
+        ui.set_clip_rect(ui.clip_rect().intersect(rect));
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            row_icon(ui, texture);
+            ui.add_space(6.0);
+            ui.add(
+                egui::Label::new(format!("{}  ({})", process.name, process.pid))
+                    .truncate()
+                    .selectable(false)
+                    .sense(Sense::hover()),
+            );
+        });
+    });
+    response.clicked()
+}
+
+fn paint_row_bg(ui: &egui::Ui, rect: Rect, selected: bool, hovered: bool) {
+    let fill = if selected {
+        Some(ui.visuals().selection.bg_fill)
+    } else if hovered {
+        Some(Color32::from_rgba_unmultiplied(255, 255, 255, 10))
+    } else {
+        None
+    };
+    if let Some(fill) = fill {
+        ui.painter().rect_filled(rect, 4.0, fill);
+    }
+}
+
+fn row_icon(ui: &mut egui::Ui, texture: Option<&TextureHandle>) {
+    match texture {
+        Some(texture) => {
+            ui.add(egui::Image::new((texture.id(), Vec2::splat(16.0))).sense(Sense::hover()));
+        }
+        None => {
+            ui.add(
+                egui::Label::new(RichText::new("·").color(Color32::DARK_GRAY))
+                    .selectable(false)
+                    .sense(Sense::hover()),
+            );
+        }
+    }
+}
+
+fn draw_dll_panel(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
+    let mut changed = false;
+    egui::Panel::bottom("dll_footer")
+        .resizable(false)
+        .show_separator_line(false)
+        .frame(Frame::NONE.fill(SURFACE).inner_margin(Margin {
+            left: 0,
+            right: 0,
+            top: 10,
+            bottom: 4,
+        }))
+        .show(ui, |ui| changed |= draw_dll_footer(ui, app));
+    ui.label(RichText::new("DLLs").size(15.0).strong());
+    ui.add_space(8.0);
+    changed |= filled_scroll(ui, "dll_list", |ui| {
+        draw_dll_list(ui, &mut app.config.dlls, app.default_dll_texture.id())
+    });
+    changed
+}
+
+fn draw_dll_footer(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
+    rule_separator(ui);
+    ui.add_space(10.0);
+    let settings = draw_dll_settings(ui, app);
+    ui.add_space(10.0);
+    settings | draw_dll_actions(ui, app)
+}
+
+fn draw_dll_settings(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
+    ui.horizontal(|ui| {
+        let copy = ui
+            .checkbox(&mut app.config.copy_dll_on_inject, "Copy on inject")
+            .on_hover_text("Keeps the original DLL free for rebuilding.")
+            .changed();
+        ui.add_space(16.0);
+        let random = ui
+            .add_enabled(
+                app.config.copy_dll_on_inject,
+                egui::Checkbox::new(&mut app.config.randomize_dll_name, "Random name"),
+            )
+            .on_hover_text("Gives the copied DLL a random name.")
+            .changed();
+        copy || random
+    })
+    .inner
+}
+
+fn draw_dll_actions(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
+    let selected = app.selected_dlls().count();
+    let can_inject = app.selected_process.is_some() && selected > 0 && !app.is_injecting;
+    let inject = if app.is_injecting {
+        "Injecting…"
+    } else {
+        "Inject"
+    };
+    let size = Vec2::new(action_width(ui), 24.0);
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        if action_button(ui, true, "Add DLL", size) {
+            changed |= add_dll(app);
+        }
+        if action_button(ui, can_inject, inject, size) {
+            app.start_injection(ui.ctx());
+        }
+        if action_button(ui, selected > 0, "Remove", size) {
+            let n = remove_selected_dlls(app);
+            app.add_toast(ToastLevel::Info, format!("Removed {n} DLL(s)."));
+            changed = true;
+        }
+    });
+    changed
+}
+
+fn action_width(ui: &egui::Ui) -> f32 {
+    let gap = ui.spacing().item_spacing.x;
+    ((ui.available_width() - gap * 2.0) / 3.0)
+        .floor()
+        .clamp(49.0, 250.0)
+}
+
+fn action_button(ui: &mut egui::Ui, enabled: bool, label: &str, size: Vec2) -> bool {
+    ui.add_enabled(enabled, egui::Button::new(label).min_size(size))
+        .clicked()
+}
+
+fn draw_dll_list(ui: &mut egui::Ui, dlls: &mut [Dll], texture: egui::TextureId) -> bool {
+    if dlls.is_empty() {
+        ui.colored_label(Color32::DARK_GRAY, "No DLLs added yet.");
+        return false;
+    }
+    let mut changed = false;
+    for dll in dlls {
+        changed |= draw_dll_row(ui, dll, texture);
+    }
+    changed
+}
+
+fn draw_dll_row(ui: &mut egui::Ui, dll: &mut Dll, texture: egui::TextureId) -> bool {
+    ui.horizontal(|ui| {
+        ui.add(egui::Image::new((texture, Vec2::splat(16.0))));
+        ui.checkbox(&mut dll.selected, dll_label(&dll.path)).changed()
+    })
+    .inner
+}
+
+fn dll_label(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_owned())
+}
+
+fn add_dll(app: &mut InjectorApp) -> bool {
+    let Some(path) = crate::core::dll_selector::select_dll() else {
+        return false;
+    };
+    if app.config.dlls.iter().any(|dll| dll.path == path) {
+        app.add_toast(ToastLevel::Warning, "DLL is already in the list.");
+        return false;
+    }
+    app.config.dlls.push(Dll {
+        path,
+        selected: false,
+    });
+    true
+}
+
+fn remove_selected_dlls(app: &mut InjectorApp) -> usize {
+    let before = app.config.dlls.len();
+    app.config.dlls.retain(|dll| !dll.selected);
+    before - app.config.dlls.len()
 }
