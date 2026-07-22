@@ -25,6 +25,14 @@
 
 ---
 
+## 🖼️ GUI Preview
+
+<p align="center">
+  <img src="https://github.com/fluffysnaff/fluffy-injector/raw/main/assets/screenshot.png" alt="Fluffy Injector UI Screenshot">
+</p>
+
+---
+
 ## What is Fluffy Injector?
 
 **Fluffy Injector** replaces command-line DLL injection workflows with a focused Windows desktop interface. It is designed for controlled development, research, and modification workflows:
