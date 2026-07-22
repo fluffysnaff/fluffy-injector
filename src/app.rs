@@ -34,6 +34,7 @@ impl InjectorApp {
         let (background_tx, background_rx) = mpsc::channel();
         let (icon_tx, icon_rx) = mpsc::channel();
         spawn_workers(&cc.egui_ctx, &background_tx, icon_rx);
+        crate::ui::apply_theme(&cc.egui_ctx);
         Self {
             processes: Vec::new(),
             selected_process: None,

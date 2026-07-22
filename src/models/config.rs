@@ -2,11 +2,12 @@ use anyhow::{Context, Result};
 use eframe::{Storage, APP_KEY};
 use serde::{Deserialize, Serialize};
 
-pub(crate) const DEFAULT_WINDOW_SIZE: [f32; 2] = [800.0, 600.0];
-pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [600.0, 400.0];
+pub(crate) const DEFAULT_WINDOW_SIZE: [f32; 2] = [680.0, 450.0];
+pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [420.0, 300.0];
 pub(crate) const APP_NAME: &str = "Fluffy Injector";
+pub(crate) const DEFAULT_SPLIT_RATIO: f32 = 0.42;
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Config {
     pub dlls: Vec<Dll>,
     pub last_selected_app: Option<String>,
@@ -14,6 +15,25 @@ pub(crate) struct Config {
     pub copy_dll_on_inject: bool,
     #[serde(default)]
     pub randomize_dll_name: bool,
+    /// Fraction of the body width used by the process list (0..=1).
+    #[serde(default = "default_split_ratio")]
+    pub split_ratio: f32,
+}
+
+fn default_split_ratio() -> f32 {
+    DEFAULT_SPLIT_RATIO
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            dlls: Vec::new(),
+            last_selected_app: None,
+            copy_dll_on_inject: false,
+            randomize_dll_name: false,
+            split_ratio: DEFAULT_SPLIT_RATIO,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
