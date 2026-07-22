@@ -50,10 +50,12 @@ The goal is to make DLL injection straightforward without hiding important contr
 - **🔍 Native process scanning:** Lists running processes with their names, PIDs, and available application icons.
 - **⚡ Live filtering:** Searches the process list as you type.
 - **🔄 Automatic process tracking:** Removes terminated processes and reacquires a same-name replacement without a manual refresh.
+- **⭐ Favorites:** Right-click a process to favorite or unfavorite it. Favorites stay pinned at the top of the list.
+- **🚫 Block list:** Right-click a process to hide it from the list. Right-click empty space in the process panel, open **Blocked**, and select a name to unblock it.
 - **📂 Multi-DLL management:** Adds, selects, injects, and removes one or more DLLs from a persistent list.
 - **🚀 Verified injection:** Uses Wraith-backed remote memory operations, Unicode paths, `LoadLibraryW`, and completion checks.
 - **📋 Copy on inject:** Injects a temporary copy so the original DLL remains available for rebuilding, with an optional random filename.
-- **💾 Persistent sessions:** Stores DLLs, checked selections, the last target name, window size, and multi-monitor placement in Windows AppData.
+- **💾 Persistent sessions:** Stores DLLs, checked selections, favorites, blocked process names, the last target name, window size, and multi-monitor placement in Windows AppData.
 - **🎨 Native dark interface:** Uses `eframe` for a responsive Windows desktop experience.
 - **🔔 Toast notifications:** Reports successful injections, warnings, and failures without blocking the interface.
 
@@ -67,6 +69,8 @@ The goal is to make DLL injection straightforward without hiding important contr
 2. **Run:** Launch `fluffy_injector.exe`. No installation is required.
 3. **Inject:**
    - Select a target process from the left panel.
+   - Optionally right-click a process to **Favorite** it or **Block** it from the list.
+   - To restore a blocked process, right-click empty space in the process list and choose it under **Blocked**.
    - Select **Add DLL** for each DLL you want to add.
    - Check every DLL you want to inject.
    - Optionally enable **Copy on inject** and **Random name**.

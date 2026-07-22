@@ -201,12 +201,15 @@ fn draw_toast(ui: &mut egui::Ui, toast: &Toast) {
 fn draw_process_panel(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
     ui.label(RichText::new("Processes").size(15.0).strong());
     ui.add_space(8.0);
-    ui.add(
+    let search = ui.add(
         TextEdit::singleline(&mut app.process_search)
             .hint_text("Filter by name…")
             .desired_width(f32::INFINITY)
             .background_color(Color32::from_rgb(16, 16, 16)),
     );
+    if search.changed() {
+        app.sync_process_search_lower();
+    }
     ui.add_space(10.0);
     filled_scroll(ui, "process_list", |ui| draw_process_list(ui, app))
 }
@@ -217,17 +220,28 @@ fn draw_process_list(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
             ui.add_space(24.0);
             ui.add(egui::Spinner::new());
         });
-        return false;
+        return empty_process_space_menu(ui, app);
     }
 
-    let search = app.process_search.to_ascii_lowercase();
     let mut selection = None;
     let mut menu_action = None;
+    draw_visible_process_rows(ui, app, &mut selection, &mut menu_action);
+    let empty_changed = empty_process_space_menu(ui, app);
+    apply_process_menu_action(app, menu_action) | apply_process_selection(app, selection) | empty_changed
+}
+
+fn draw_visible_process_rows(
+    ui: &mut egui::Ui,
+    app: &InjectorApp,
+    selection: &mut Option<u32>,
+    menu_action: &mut Option<ProcessMenuAction>,
+) {
+    let search = app.process_search_lower.as_str();
     for process in &app.processes {
         if app.config.is_blocked(&process.name) {
             continue;
         }
-        if !search.is_empty() && !ascii_contains_ignore_case(&process.name, &search) {
+        if !search.is_empty() && !ascii_contains_ignore_case(&process.name, search) {
             continue;
         }
         let favorite = app.config.is_favorite(&process.name);
@@ -241,11 +255,46 @@ fn draw_process_list(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
             favorite,
         );
         if response.clicked() {
-            selection = Some(process.pid);
+            *selection = Some(process.pid);
         }
-        process_row_menu(&response, process.pid, favorite, &mut menu_action);
+        process_row_menu(&response, process.pid, favorite, menu_action);
     }
-    apply_process_menu_action(app, menu_action) | apply_process_selection(app, selection)
+}
+
+fn empty_process_space_menu(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
+    let height = ui.available_height().max(28.0);
+    let (_, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click());
+    let mut unblock = None;
+    response.context_menu(|ui| {
+        blocked_context_menu(ui, &app.config.blocked, &mut unblock);
+    });
+    let Some(index) = unblock else {
+        return false;
+    };
+    app.config.unblock_at(index);
+    true
+}
+
+fn blocked_context_menu(ui: &mut egui::Ui, blocked: &[String], unblock: &mut Option<usize>) {
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+    if blocked.is_empty() {
+        ui.add_enabled(false, egui::Button::new("Blocked (empty)"));
+        return;
+    }
+    ui.menu_button("Blocked", |ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        egui::ScrollArea::vertical()
+            .max_height(220.0)
+            .show(ui, |ui| {
+                for (index, name) in blocked.iter().enumerate() {
+                    if ui.button(name).clicked() {
+                        *unblock = Some(index);
+                        ui.close();
+                    }
+                }
+            });
+    });
 }
 
 fn ascii_contains_ignore_case(haystack: &str, needle_lower: &str) -> bool {
@@ -265,6 +314,7 @@ fn process_row_menu(
     menu_action: &mut Option<ProcessMenuAction>,
 ) {
     response.context_menu(|ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
         let favorite_label = if favorite { "Unfavorite" } else { "Favorite" };
         if ui.button(favorite_label).clicked() {
             *menu_action = Some(ProcessMenuAction::ToggleFavorite(pid));
@@ -316,6 +366,9 @@ fn apply_process_selection(app: &mut InjectorApp, selection: Option<u32>) -> boo
     let Some(pid) = selection else {
         return false;
     };
+    if app.selected_process == Some(pid) {
+        return false;
+    }
     let Some(name) = process_name_by_pid(app, pid) else {
         return false;
     };

@@ -21,6 +21,7 @@ pub(crate) struct InjectorApp {
     pub toasts: Vec<Toast>,
     pub is_injecting: bool,
     pub process_search: String,
+    pub process_search_lower: String,
     background_rx: Receiver<BackgroundMessage>,
     background_tx: Sender<BackgroundMessage>,
     icon_tx: Sender<(u32, std::path::PathBuf)>,
@@ -46,6 +47,7 @@ impl InjectorApp {
             toasts: Vec::new(),
             is_injecting: false,
             process_search: String::new(),
+            process_search_lower: String::new(),
         }
     }
 
@@ -78,6 +80,10 @@ impl InjectorApp {
 
     pub(crate) fn order_processes_by_favorite(&mut self) {
         order_by_favorite(&mut self.processes, &self.config);
+    }
+
+    pub(crate) fn sync_process_search_lower(&mut self) {
+        self.process_search_lower = self.process_search.to_ascii_lowercase();
     }
 
     pub(crate) fn selected_process_info(&self) -> Option<&ProcessInfo> {
@@ -241,16 +247,17 @@ impl eframe::App for InjectorApp {
     }
 }
 
-fn order_by_favorite(processes: &mut [ProcessInfo], config: &Config) {
+fn order_by_favorite(processes: &mut Vec<ProcessInfo>, config: &Config) {
     if config.favorites.is_empty() {
         return;
     }
-    processes.sort_by(|left, right| {
-        config
-            .is_favorite(&right.name)
-            .cmp(&config.is_favorite(&left.name))
-            .then_with(|| left.cmp(right))
-    });
+    let owned = std::mem::take(processes);
+    let (mut favorites, rest): (Vec<_>, Vec<_>) = owned
+        .into_iter()
+        .partition(|process| config.is_favorite(&process.name));
+    processes.reserve(favorites.len() + rest.len());
+    processes.append(&mut favorites);
+    processes.extend(rest);
 }
 
 fn resolve_process_selection(
