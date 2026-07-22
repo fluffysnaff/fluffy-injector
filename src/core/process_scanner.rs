@@ -1,5 +1,5 @@
 use crate::app::BackgroundMessage;
-use crate::models::process::ProcessInfo;
+use crate::models::ProcessInfo;
 use eframe::egui::Context;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;

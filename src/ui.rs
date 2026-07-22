@@ -1,7 +1,5 @@
 use crate::app::InjectorApp;
-use crate::models::config::Dll;
-use crate::models::process::ProcessInfo;
-use crate::models::toast::{Toast, ToastLevel};
+use crate::models::{Dll, ProcessInfo, Toast, ToastLevel};
 use eframe::egui::{
     self, Color32, CursorIcon, Frame, Id, Margin, Pos2, Rect, RichText, Sense, Stroke, TextEdit,
     TextureHandle, UiBuilder, Vec2, Visuals,
@@ -163,9 +161,21 @@ fn process_status(app: &InjectorApp) -> String {
 
 fn draw_toasts(ctx: &egui::Context, app: &mut InjectorApp) {
     app.toasts.retain(Toast::is_alive);
+    if app.toasts.is_empty() {
+        return;
+    }
+
+    const WIDTH: f32 = 220.0;
+    let screen = ctx.content_rect();
+    let pos = Pos2::new(screen.center().x - WIDTH * 0.5, screen.top() + 12.0);
+
     egui::Area::new("toasts".into())
-        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-12.0, -12.0))
+        .fixed_pos(pos)
+        .order(egui::Order::Foreground)
+        .interactable(false)
         .show(ctx, |ui| {
+            ui.set_min_width(WIDTH);
+            ui.set_max_width(WIDTH);
             for toast in &app.toasts {
                 draw_toast(ui, toast);
                 ui.add_space(6.0);
@@ -183,7 +193,7 @@ fn draw_toast(ui: &mut egui::Ui, toast: &Toast) {
     Frame::popup(ui.style())
         .inner_margin(Margin::symmetric(10, 8))
         .show(ui, |ui| {
-            ui.set_min_width(220.0);
+            ui.set_min_width(ui.available_width());
             ui.label(RichText::new(format!("{prefix}: {}", toast.message)).color(color));
         });
 }

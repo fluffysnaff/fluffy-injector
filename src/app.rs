@@ -1,7 +1,5 @@
 use crate::core::{icon_loader, injector, process_scanner};
-use crate::models::config::Config;
-use crate::models::process::ProcessInfo;
-use crate::models::toast::{Toast, ToastLevel};
+use crate::models::{Config, ProcessInfo, Toast, ToastLevel};
 use eframe::egui::{self, ColorImage, Context, TextureHandle};
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender};

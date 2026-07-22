@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use eframe::{Storage, APP_KEY};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 pub(crate) const DEFAULT_WINDOW_SIZE: [f32; 2] = [680.0, 450.0];
 pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [420.0, 300.0];
@@ -55,5 +57,39 @@ impl Config {
         storage.set_string(APP_KEY, data);
         storage.flush();
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ProcessInfo {
+    pub name: String,
+    pub pid: u32,
+    pub exe: PathBuf,
+}
+
+pub(crate) enum ToastLevel {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+pub(crate) struct Toast {
+    pub level: ToastLevel,
+    pub message: String,
+    created_at: Instant,
+}
+
+impl Toast {
+    pub(crate) fn new(level: ToastLevel, message: impl Into<String>) -> Self {
+        Self {
+            level,
+            message: message.into(),
+            created_at: Instant::now(),
+        }
+    }
+
+    pub(crate) fn is_alive(&self) -> bool {
+        self.created_at.elapsed() < Duration::from_secs(3)
     }
 }

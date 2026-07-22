@@ -7,7 +7,7 @@ mod models;
 mod ui;
 
 use crate::app::InjectorApp;
-use crate::models::config::{APP_NAME, DEFAULT_WINDOW_SIZE, MIN_WINDOW_SIZE};
+use crate::models::{APP_NAME, DEFAULT_WINDOW_SIZE, MIN_WINDOW_SIZE};
 use eframe::{icon_data, NativeOptions};
 use std::sync::Arc;
 
