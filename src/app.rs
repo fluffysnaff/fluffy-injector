@@ -2,6 +2,7 @@ use crate::core::{icon_loader, injector, process_scanner};
 use crate::models::{Config, ProcessInfo, Toast, ToastLevel};
 use eframe::egui::{self, ColorImage, Context, TextureHandle};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 pub(crate) enum BackgroundMessage {
@@ -51,28 +52,21 @@ impl InjectorApp {
         }
     }
 
-    fn handle_background_updates(&mut self, ctx: &Context) {
-        while let Ok(message) = self.background_rx.try_recv() {
-            handle_background_message(self, ctx, message);
-        }
-    }
-
     fn update_icon(&mut self, ctx: &Context, (pid, image): (u32, ColorImage)) {
         let texture = ctx.load_texture(format!("icon_{pid}"), image, Default::default());
         self.icon_cache.insert(pid, texture);
     }
 
     fn update_processes(&mut self, mut processes: Vec<ProcessInfo>) {
-        let live_pids: HashSet<u32> = processes.iter().map(|process| process.pid).collect();
-        self.icon_cache.retain(|pid, _| live_pids.contains(pid));
+        let live: HashSet<u32> = processes.iter().map(|p| p.pid).collect();
+        self.icon_cache.retain(|pid, _| live.contains(pid));
         order_by_favorite(&mut processes, &self.config);
-        let last_selected = self
+        let last = self
             .config
             .last_selected_app
             .as_deref()
             .filter(|name| !self.config.is_blocked(name));
-        self.selected_process =
-            resolve_process_selection(&processes, self.selected_process, last_selected);
+        self.selected_process = resolve_selection(&processes, self.selected_process, last);
         self.processes = processes;
         self.is_loading_processes = false;
         request_missing_icons(&self.processes, &self.icon_cache, &self.icon_tx);
@@ -88,7 +82,7 @@ impl InjectorApp {
 
     pub(crate) fn selected_process_info(&self) -> Option<&ProcessInfo> {
         self.selected_process
-            .and_then(|pid| self.processes.iter().find(|process| process.pid == pid))
+            .and_then(|pid| self.processes.iter().find(|p| p.pid == pid))
     }
 
     pub(crate) fn add_toast(&mut self, level: ToastLevel, message: impl Into<String>) {
@@ -97,10 +91,7 @@ impl InjectorApp {
 
     fn persist_config(&mut self, storage: &mut dyn eframe::Storage) {
         if let Err(error) = self.config.save(storage) {
-            self.add_toast(
-                ToastLevel::Error,
-                format!("Failed to save settings: {error}"),
-            );
+            self.add_toast(ToastLevel::Error, format!("Failed to save settings: {error}"));
         }
     }
 
@@ -112,10 +103,14 @@ impl InjectorApp {
     }
 
     pub(crate) fn start_injection(&mut self, ctx: &Context) {
+        let dlls: Vec<String> = self.selected_dlls().map(str::to_owned).collect();
+        self.start_injection_of(ctx, dlls);
+    }
+
+    pub(crate) fn start_injection_of(&mut self, ctx: &Context, dlls: Vec<String>) {
         let Some(pid) = self.selected_process else {
             return;
         };
-        let dlls: Vec<String> = self.selected_dlls().map(str::to_owned).collect();
         if dlls.is_empty() || self.is_injecting {
             return;
         }
@@ -125,7 +120,10 @@ impl InjectorApp {
         let tx = self.background_tx.clone();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            send_injection_result(&tx, &ctx, inject_dlls(pid, &dlls, copy, randomize));
+            let message = inject_dlls(pid, &dlls, copy, randomize);
+            if tx.send(message).is_ok() {
+                ctx.request_repaint();
+            }
         });
     }
 
@@ -182,34 +180,20 @@ fn request_missing_icons(
     }
 }
 
-fn send_injection_result(
-    tx: &Sender<BackgroundMessage>,
-    ctx: &Context,
-    message: BackgroundMessage,
-) {
-    if tx.send(message).is_ok() {
-        ctx.request_repaint();
-    }
-}
-
 fn inject_dlls(pid: u32, dlls: &[String], copy: bool, randomize: bool) -> BackgroundMessage {
     let failures = dlls
         .iter()
         .filter_map(|path| {
-            injector::inject_dll(pid, path, copy, randomize)
-                .err()
-                .map(|error| format!("{}: {error}", dll_name(path)))
+            injector::inject_dll(pid, path, copy, randomize).err().map(|error| {
+                let name = Path::new(path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                format!("{name}: {error}")
+            })
         })
         .collect();
     BackgroundMessage::Injection(dlls.len(), failures)
-}
-
-fn dll_name(path: &str) -> String {
-    std::path::Path::new(path)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned()
 }
 
 fn load_default_dll_icon(ctx: &Context) -> TextureHandle {
@@ -226,7 +210,9 @@ fn load_default_dll_icon(ctx: &Context) -> TextureHandle {
 
 impl eframe::App for InjectorApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        self.handle_background_updates(ui.ctx());
+        while let Ok(message) = self.background_rx.try_recv() {
+            handle_background_message(self, ui.ctx(), message);
+        }
         let changed = crate::ui::show(ui, self);
         if let (true, Some(storage)) = (changed, frame.storage_mut()) {
             self.persist_config(storage);
@@ -247,20 +233,14 @@ impl eframe::App for InjectorApp {
     }
 }
 
-fn order_by_favorite(processes: &mut Vec<ProcessInfo>, config: &Config) {
+fn order_by_favorite(processes: &mut [ProcessInfo], config: &Config) {
     if config.favorites.is_empty() {
         return;
     }
-    let owned = std::mem::take(processes);
-    let (mut favorites, rest): (Vec<_>, Vec<_>) = owned
-        .into_iter()
-        .partition(|process| config.is_favorite(&process.name));
-    processes.reserve(favorites.len() + rest.len());
-    processes.append(&mut favorites);
-    processes.extend(rest);
+    processes.sort_by_key(|process| !config.is_favorite(&process.name));
 }
 
-fn resolve_process_selection(
+fn resolve_selection(
     processes: &[ProcessInfo],
     selected_pid: Option<u32>,
     selected_name: Option<&str>,

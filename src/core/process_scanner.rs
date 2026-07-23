@@ -29,27 +29,23 @@ struct Scanner {
 impl Scanner {
     fn poll(&mut self) -> Option<BackgroundMessage> {
         match scan_processes(&mut self.path_cache, &mut self.path_buffer) {
-            Ok(processes) => self.update_processes(processes),
-            Err(error) => self.update_error(format!("Process scan failed: {error}")),
+            Ok(processes) => {
+                self.last_error = None;
+                changed(&mut self.last_processes, processes).map(BackgroundMessage::Processes)
+            }
+            Err(error) => {
+                let error = format!("Process scan failed: {error}");
+                changed(&mut self.last_error, error).map(BackgroundMessage::Error)
+            }
         }
     }
+}
 
-    fn update_processes(&mut self, processes: Vec<ProcessInfo>) -> Option<BackgroundMessage> {
-        self.last_error = None;
-        if self.last_processes.as_ref() == Some(&processes) {
-            return None;
-        }
-        self.last_processes = Some(processes.clone());
-        Some(BackgroundMessage::Processes(processes))
-    }
-
-    fn update_error(&mut self, error: String) -> Option<BackgroundMessage> {
-        if self.last_error.as_ref() == Some(&error) {
-            return None;
-        }
-        self.last_error = Some(error.clone());
-        Some(BackgroundMessage::Error(error))
-    }
+fn changed<T: Clone + PartialEq>(last: &mut Option<T>, next: T) -> Option<T> {
+    (last.as_ref() != Some(&next)).then(|| {
+        *last = Some(next.clone());
+        next
+    })
 }
 
 pub(crate) fn scan_loop(tx: Sender<BackgroundMessage>, ctx: Context) {

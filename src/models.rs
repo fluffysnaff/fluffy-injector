@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use eframe::{Storage, APP_KEY};
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -57,8 +56,8 @@ impl Config {
             .and_then(|storage| storage.get_string(APP_KEY))
             .and_then(|data| ron::from_str(&data).ok())
             .unwrap_or_default();
-        sort_names_ascii(&mut config.blocked);
-        sort_names_ascii(&mut config.favorites);
+        sort_names(&mut config.blocked);
+        sort_names(&mut config.favorites);
         config
     }
 
@@ -70,23 +69,23 @@ impl Config {
     }
 
     pub(crate) fn is_favorite(&self, name: &str) -> bool {
-        contains_sorted(&self.favorites, name)
+        has_name(&self.favorites, name)
     }
 
     pub(crate) fn is_blocked(&self, name: &str) -> bool {
-        contains_sorted(&self.blocked, name)
+        has_name(&self.blocked, name)
     }
 
     pub(crate) fn toggle_favorite(&mut self, name: &str) {
-        if remove_sorted(&mut self.favorites, name) {
+        if remove_name(&mut self.favorites, name) {
             return;
         }
-        insert_sorted(&mut self.favorites, name.to_owned());
+        push_unique(&mut self.favorites, name.to_owned());
     }
 
     pub(crate) fn block_process(&mut self, name: &str) {
-        remove_sorted(&mut self.favorites, name);
-        insert_sorted(&mut self.blocked, name.to_owned());
+        remove_name(&mut self.favorites, name);
+        push_unique(&mut self.blocked, name.to_owned());
     }
 
     pub(crate) fn unblock_at(&mut self, index: usize) {
@@ -96,34 +95,32 @@ impl Config {
     }
 }
 
-fn cmp_names_ascii(left: &str, right: &str) -> Ordering {
-    left.bytes()
-        .map(|byte| byte.to_ascii_lowercase())
-        .cmp(right.bytes().map(|byte| byte.to_ascii_lowercase()))
+fn has_name(names: &[String], name: &str) -> bool {
+    names.iter().any(|entry| entry.eq_ignore_ascii_case(name))
 }
 
-fn sort_names_ascii(names: &mut [String]) {
-    names.sort_unstable_by(|left, right| cmp_names_ascii(left, right));
-}
-
-fn contains_sorted(names: &[String], name: &str) -> bool {
-    names.binary_search_by(|entry| cmp_names_ascii(entry, name)).is_ok()
-}
-
-fn insert_sorted(names: &mut Vec<String>, name: String) {
-    if let Err(index) = names.binary_search_by(|entry| cmp_names_ascii(entry, &name)) {
-        names.insert(index, name);
+fn push_unique(names: &mut Vec<String>, name: String) {
+    if has_name(names, &name) {
+        return;
     }
+    names.push(name);
+    sort_names(names);
 }
 
-fn remove_sorted(names: &mut Vec<String>, name: &str) -> bool {
-    match names.binary_search_by(|entry| cmp_names_ascii(entry, name)) {
-        Ok(index) => {
-            names.remove(index);
-            true
-        }
-        Err(_) => false,
-    }
+fn remove_name(names: &mut Vec<String>, name: &str) -> bool {
+    let Some(index) = names.iter().position(|entry| entry.eq_ignore_ascii_case(name)) else {
+        return false;
+    };
+    names.remove(index);
+    true
+}
+
+fn sort_names(names: &mut [String]) {
+    names.sort_unstable_by(|left, right| {
+        left.bytes()
+            .map(|byte| byte.to_ascii_lowercase())
+            .cmp(right.bytes().map(|byte| byte.to_ascii_lowercase()))
+    });
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
