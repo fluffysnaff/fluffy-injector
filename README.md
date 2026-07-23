@@ -53,10 +53,11 @@ The goal is to make DLL injection straightforward without hiding important contr
 - **⭐ Favorites:** Right-click a process to favorite or unfavorite it. Favorites stay pinned at the top of the list.
 - **🚫 Block list:** Right-click a process to hide it from the list. Right-click empty space in the process panel, open **Blocked**, and select a name to unblock it.
 - **📂 Multi-DLL management:** Adds, selects, injects, and removes one or more DLLs from a persistent list.
+- **📎 DLL context menu:** Right-click a DLL to open its file location, inject it into the selected process, or remove it. Right-click empty space in the DLL list to add a DLL.
 - **🚀 Verified injection:** Uses Wraith-backed remote memory operations, Unicode paths, `LoadLibraryW`, and completion checks.
 - **📋 Copy on inject:** Injects a temporary copy so the original DLL remains available for rebuilding, with an optional random filename.
-- **💾 Persistent sessions:** Stores DLLs, checked selections, favorites, blocked process names, the last target name, window size, and multi-monitor placement in Windows AppData.
-- **🎨 Native dark interface:** Uses `eframe` for a responsive Windows desktop experience.
+- **💾 Persistent sessions:** Stores DLLs, checked selections, favorites, blocked process names, the last target name, split ratio, window size, and multi-monitor placement in Windows AppData.
+- **🎨 Native dark interface:** Uses `eframe` for a responsive Windows desktop experience, including a resizable process / DLL split.
 - **🔔 Toast notifications:** Reports successful injections, warnings, and failures without blocking the interface.
 
 ---
@@ -71,10 +72,10 @@ The goal is to make DLL injection straightforward without hiding important contr
    - Select a target process from the left panel.
    - Optionally right-click a process to **Favorite** it or **Block** it from the list.
    - To restore a blocked process, right-click empty space in the process list and choose it under **Blocked**.
-   - Select **Add DLL** for each DLL you want to add.
-   - Check every DLL you want to inject.
+   - Select **Add DLL** for each DLL you want to add, or right-click empty space in the DLL list → **Add DLL**.
+   - Check every DLL you want to inject, or right-click a DLL for **Open file location**, **Inject**, or **Delete**.
    - Optionally enable **Copy on inject** and **Random name**.
-   - Select **Inject**.
+   - Select **Inject** (or use **Inject** from a DLL’s context menu for a single file).
 
 ### For Developers (Building from Source)
 
