@@ -6,7 +6,7 @@
   </a>
 </p>
 
-**Fluffy Injector is an open-source Windows DLL injector written in Rust, with a native desktop interface and live process tracking. Explore more projects at [fluffysnaff.xyz](https://fluffysnaff.xyz) or on [GitHub](https://github.com/fluffysnaff).**
+**Fluffy Injector is an open-source Windows DLL injector written in Rust, with a native desktop interface, live process tracking, and a headless CLI. Explore more projects at [fluffysnaff.xyz](https://fluffysnaff.xyz) or on [GitHub](https://github.com/fluffysnaff).**
 
 <p align="center">
     <a href="https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml"><img src="https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml/badge.svg" alt="Build Status"></a>
@@ -35,7 +35,7 @@
 
 ## What is Fluffy Injector?
 
-**Fluffy Injector** replaces command-line DLL injection workflows with a focused Windows desktop interface. It is designed for controlled development, research, and modification workflows:
+**Fluffy Injector** is a focused Windows desktop injector with an optional headless CLI for scripts and post-build steps. It is designed for controlled development, research, and modification workflows:
 
 - **Developers:** Load custom DLLs while developing software.
 - **Security researchers:** Analyze process behavior and interactions.
@@ -54,7 +54,8 @@ The goal is to make DLL injection straightforward without hiding important contr
 - **🚫 Block list:** Right-click a process to hide it from the list. Right-click empty space in the process panel, open **Blocked**, and select a name to unblock it.
 - **📂 Multi-DLL management:** Adds, selects, injects, and removes one or more DLLs from a persistent list.
 - **📎 DLL context menu:** Right-click a DLL to open its file location, inject it into the selected process, or remove it. Right-click empty space in the DLL list to add a DLL.
-- **🚀 Verified injection:** Uses Wraith-backed remote memory operations, Unicode paths, `LoadLibraryW`, and completion checks.
+- **⌨️ Headless CLI:** Injects from a terminal with a PID or process name plus one or more DLL paths. No arguments still launches the GUI.
+- **🚀 Verified injection:** Uses Wraith-backed remote memory operations, Unicode paths, `LoadLibraryW`, and completion checks. Already-mapped modules are left in place instead of calling `LoadLibraryW` again.
 - **📋 Copy on inject:** Injects a temporary copy so the original DLL remains available for rebuilding, with an optional random filename.
 - **💾 Persistent sessions:** Stores DLLs, checked selections, favorites, blocked process names, the last target name, split ratio, window size, and multi-monitor placement in Windows AppData.
 - **🎨 Native dark interface:** Uses `eframe` for a responsive Windows desktop experience, including a resizable process / DLL split.
@@ -93,6 +94,25 @@ cargo +nightly build --release
 ```
 
 The executable is written to `target\release\fluffy_injector.exe`.
+
+### Headless CLI
+
+Launching `fluffy_injector.exe` with no arguments still opens the GUI and hides the console. Any other argument stays in the terminal so scripts and post-build steps get stdout, stderr, and the exit code. Opening the GUI from Explorer can flash a console window briefly.
+
+```powershell
+fluffy_injector.exe notepad.exe C:\hooks.dll
+fluffy_injector.exe 1234 C:\hooks.dll C:\overlay.dll
+```
+
+The first argument is a PID if it is all digits, otherwise a case-insensitive process name (`.exe` optional). Every argument after that is a DLL path, resolved against the injector working directory rather than the target process CWD. `-n` / `--name` / `-p` / `--pid` still work as aliases. `-h` / `--help` prints usage and exits `0`.
+
+Copy-on-inject, random names, eject, and window-title targeting stay GUI-only. If several processes share the same name, the CLI lists their PIDs and exits `2` so you can pass a PID. A DLL whose file name is already mapped in the target is treated as success and is not loaded again.
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | GUI not involved; every requested DLL is mapped (injected or already present). `--help` also exits `0`. |
+| `1` | Injection failed, including a missing DLL file. |
+| `2` | Bad arguments, process not found, or an ambiguous process name. |
 
 ---
 

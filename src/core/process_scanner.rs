@@ -69,29 +69,58 @@ fn publish_update(scanner: &mut Scanner, tx: &Sender<BackgroundMessage>, ctx: &C
     true
 }
 
+pub(crate) fn pids_named(name: &str) -> windows::core::Result<Vec<u32>> {
+    let wanted = strip_exe(name);
+    let mut pids = Vec::new();
+    for_each_process_entry(|entry| {
+        if strip_exe(&process_name(entry)).eq_ignore_ascii_case(wanted) {
+            pids.push(entry.th32ProcessID);
+        }
+    })?;
+    Ok(pids)
+}
+
+fn strip_exe(name: &str) -> &str {
+    let bytes = name.as_bytes();
+    let Some(stem) = bytes.len().checked_sub(4) else {
+        return name;
+    };
+    if bytes[stem..].eq_ignore_ascii_case(b".exe") {
+        &name[..stem]
+    } else {
+        name
+    }
+}
+
 fn scan_processes(
     path_cache: &mut HashMap<u32, (String, PathBuf)>,
     path_buffer: &mut [u16],
 ) -> windows::core::Result<Vec<ProcessInfo>> {
+    let mut processes = Vec::new();
+    let mut live_pids = HashSet::new();
+    for_each_process_entry(|entry| {
+        let process = process_from_entry(entry, path_cache, path_buffer);
+        live_pids.insert(process.pid);
+        processes.push(process);
+    })?;
+    path_cache.retain(|pid, _| live_pids.contains(pid));
+    processes.sort_unstable();
+    Ok(processes)
+}
+
+fn for_each_process_entry(mut visit: impl FnMut(&PROCESSENTRY32W)) -> windows::core::Result<()> {
     let snapshot = unsafe { Owned::new(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?) };
     let mut entry = PROCESSENTRY32W {
         dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
         ..Default::default()
     };
-    let mut processes = Vec::new();
-    let mut live_pids = HashSet::new();
     unsafe { Process32FirstW(*snapshot, &mut entry)? };
     loop {
-        let process = process_from_entry(&entry, path_cache, path_buffer);
-        live_pids.insert(process.pid);
-        processes.push(process);
+        visit(&entry);
         if unsafe { Process32NextW(*snapshot, &mut entry) }.is_err() {
-            break;
+            return Ok(());
         }
     }
-    path_cache.retain(|pid, _| live_pids.contains(pid));
-    processes.sort_unstable();
-    Ok(processes)
 }
 
 fn process_from_entry(
@@ -100,12 +129,7 @@ fn process_from_entry(
     path_buffer: &mut [u16],
 ) -> ProcessInfo {
     let pid = entry.th32ProcessID;
-    let name_length = entry
-        .szExeFile
-        .iter()
-        .position(|&character| character == 0)
-        .unwrap_or(entry.szExeFile.len());
-    let name = String::from_utf16_lossy(&entry.szExeFile[..name_length]);
+    let name = process_name(entry);
     let exe = match path_cache.get(&pid) {
         Some((cached_name, path)) if cached_name == &name => path.clone(),
         _ => {
@@ -115,6 +139,15 @@ fn process_from_entry(
         }
     };
     ProcessInfo { name, pid, exe }
+}
+
+fn process_name(entry: &PROCESSENTRY32W) -> String {
+    let name_length = entry
+        .szExeFile
+        .iter()
+        .position(|&character| character == 0)
+        .unwrap_or(entry.szExeFile.len());
+    String::from_utf16_lossy(&entry.szExeFile[..name_length])
 }
 
 fn query_process_path(pid: u32, buffer: &mut [u16]) -> PathBuf {

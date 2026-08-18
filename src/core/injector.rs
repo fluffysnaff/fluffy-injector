@@ -24,15 +24,15 @@ const INJECTION_ACCESS: u32 = PROCESS_CREATE_THREAD.0
 
 pub(crate) fn inject_dll(
     process_id: u32,
-    dll_path: &str,
+    dll_path: impl AsRef<Path>,
     copy_on_inject: bool,
     randomize_name: bool,
 ) -> Result<()> {
+    let dll_path = dll_path.as_ref();
     let copy = copy_on_inject
-        .then(|| create_injection_copy(process_id, Path::new(dll_path), randomize_name))
+        .then(|| create_injection_copy(process_id, dll_path, randomize_name))
         .transpose()?;
-    let path = copy.as_deref().unwrap_or(Path::new(dll_path));
-    inject_dll_path(process_id, path)
+    inject_dll_path(process_id, copy.as_deref().unwrap_or(dll_path))
 }
 
 fn create_injection_copy(process_id: u32, source: &Path, randomize_name: bool) -> Result<PathBuf> {
@@ -80,11 +80,21 @@ fn random_file_stem() -> String {
 fn inject_dll_path(process_id: u32, dll_path: &Path) -> Result<()> {
     let process = RemoteProcess::open(process_id, ProcessAccess::custom(INJECTION_ACCESS))
         .context("Failed to open target process")?;
+    if dll_already_mapped(&process, dll_path) {
+        return Ok(());
+    }
     let path_memory = write_dll_path(&process, dll_path)?;
     let load_library = remote_load_library_address(&process)?;
     let thread = create_load_library_thread(&process, load_library, path_memory.base())?;
     wait_for_load(*thread, path_memory)?;
     ensure_load_succeeded(*thread)
+}
+
+fn dll_already_mapped(process: &RemoteProcess, dll_path: &Path) -> bool {
+    dll_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| find_remote_module(process, name).is_ok())
 }
 
 fn write_dll_path(process: &RemoteProcess, dll_path: &Path) -> Result<RemoteAllocation> {

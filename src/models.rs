@@ -108,7 +108,10 @@ fn push_unique(names: &mut Vec<String>, name: String) {
 }
 
 fn remove_name(names: &mut Vec<String>, name: &str) -> bool {
-    let Some(index) = names.iter().position(|entry| entry.eq_ignore_ascii_case(name)) else {
+    let Some(index) = names
+        .iter()
+        .position(|entry| entry.eq_ignore_ascii_case(name))
+    else {
         return false;
     };
     names.remove(index);

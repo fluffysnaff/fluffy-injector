@@ -91,7 +91,10 @@ impl InjectorApp {
 
     fn persist_config(&mut self, storage: &mut dyn eframe::Storage) {
         if let Err(error) = self.config.save(storage) {
-            self.add_toast(ToastLevel::Error, format!("Failed to save settings: {error}"));
+            self.add_toast(
+                ToastLevel::Error,
+                format!("Failed to save settings: {error}"),
+            );
         }
     }
 
@@ -184,13 +187,15 @@ fn inject_dlls(pid: u32, dlls: &[String], copy: bool, randomize: bool) -> Backgr
     let failures = dlls
         .iter()
         .filter_map(|path| {
-            injector::inject_dll(pid, path, copy, randomize).err().map(|error| {
-                let name = Path::new(path)
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy();
-                format!("{name}: {error}")
-            })
+            injector::inject_dll(pid, path, copy, randomize)
+                .err()
+                .map(|error| {
+                    let name = Path::new(path)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy();
+                    format!("{name}: {error}")
+                })
         })
         .collect();
     BackgroundMessage::Injection(dlls.len(), failures)

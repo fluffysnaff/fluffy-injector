@@ -134,11 +134,10 @@ fn status_contents(ui: &mut egui::Ui, app: &InjectorApp) {
 fn process_status(app: &InjectorApp) -> String {
     match app.selected_process_info() {
         Some(p) => format!("{}  ·  PID {}", p.name, p.pid),
-        None => app
-            .config
-            .last_selected_app
-            .as_ref()
-            .map_or_else(|| "No process selected".into(), |n| format!("Waiting for {n}")),
+        None => app.config.last_selected_app.as_ref().map_or_else(
+            || "No process selected".into(),
+            |n| format!("Waiting for {n}"),
+        ),
     }
 }
 
@@ -241,7 +240,11 @@ fn process_menu(r: &egui::Response, pid: u32, fav: bool, menu: &mut Option<Actio
 }
 
 fn matches_search(name: &str, q: &str) -> bool {
-    q.is_empty() || name.as_bytes().windows(q.len()).any(|w| w.eq_ignore_ascii_case(q.as_bytes()))
+    q.is_empty()
+        || name
+            .as_bytes()
+            .windows(q.len())
+            .any(|w| w.eq_ignore_ascii_case(q.as_bytes()))
 }
 
 fn blocked_menu(ui: &mut egui::Ui, app: &InjectorApp) -> Option<Action> {
@@ -254,7 +257,9 @@ fn blocked_menu(ui: &mut egui::Ui, app: &InjectorApp) -> Option<Action> {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
         egui::ScrollArea::vertical()
             .max_height(220.0)
-            .show(ui, |ui| blocked_entries(ui, &app.config.blocked, &mut unblock));
+            .show(ui, |ui| {
+                blocked_entries(ui, &app.config.blocked, &mut unblock)
+            });
     });
     unblock
 }
@@ -283,7 +288,12 @@ fn process_row(
             ui.label(RichText::new("★").strong());
             ui.add_space(4.0);
         }
-        ui.add(egui::Label::new(&p.name).truncate().selectable(false).sense(Sense::hover()));
+        ui.add(
+            egui::Label::new(&p.name)
+                .truncate()
+                .selectable(false)
+                .sense(Sense::hover()),
+        );
         ui.add_space(4.0);
         ui.label(RichText::new(format!("({})", p.pid)).color(Color32::from_gray(160)));
     });
@@ -340,19 +350,36 @@ fn dll_actions(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
     let n = app.selected_dlls().count();
     let can = app.selected_process.is_some() && n > 0 && !app.is_injecting;
     let gap = ui.spacing().item_spacing.x;
-    let size = Vec2::new(((ui.available_width() - gap * 2.0) / 3.0).floor().clamp(49.0, 250.0), 24.0);
+    let size = Vec2::new(
+        ((ui.available_width() - gap * 2.0) / 3.0)
+            .floor()
+            .clamp(49.0, 250.0),
+        24.0,
+    );
     let mut changed = false;
     ui.horizontal(|ui| {
         if btn(ui, true, "Add DLL", size) {
             changed |= apply(app, ui.ctx(), Some(Action::AddDll));
         }
-        if btn(ui, can, if app.is_injecting { "Injecting…" } else { "Inject" }, size) {
+        if btn(
+            ui,
+            can,
+            if app.is_injecting {
+                "Injecting…"
+            } else {
+                "Inject"
+            },
+            size,
+        ) {
             app.start_injection(ui.ctx());
         }
         if btn(ui, n > 0, "Remove", size) {
             let before = app.config.dlls.len();
             app.config.dlls.retain(|d| !d.selected);
-            app.add_toast(ToastLevel::Info, format!("Removed {} DLL(s).", before - app.config.dlls.len()));
+            app.add_toast(
+                ToastLevel::Info,
+                format!("Removed {} DLL(s).", before - app.config.dlls.len()),
+            );
             changed = true;
         }
     });
@@ -468,7 +495,12 @@ fn select_process(app: &mut InjectorApp, pid: u32) -> bool {
     if app.selected_process == Some(pid) {
         return false;
     }
-    let Some(name) = app.processes.iter().find(|p| p.pid == pid).map(|p| p.name.clone()) else {
+    let Some(name) = app
+        .processes
+        .iter()
+        .find(|p| p.pid == pid)
+        .map(|p| p.name.clone())
+    else {
         return false;
     };
     app.selected_process = Some(pid);
@@ -477,7 +509,12 @@ fn select_process(app: &mut InjectorApp, pid: u32) -> bool {
 }
 
 fn with_name(app: &mut InjectorApp, pid: u32, f: impl FnOnce(&mut InjectorApp, &str)) -> bool {
-    let Some(name) = app.processes.iter().find(|p| p.pid == pid).map(|p| p.name.clone()) else {
+    let Some(name) = app
+        .processes
+        .iter()
+        .find(|p| p.pid == pid)
+        .map(|p| p.name.clone())
+    else {
         return false;
     };
     f(app, &name);
@@ -492,7 +529,10 @@ fn add_dll(app: &mut InjectorApp) -> bool {
         app.add_toast(ToastLevel::Warning, "DLL is already in the list.");
         return false;
     }
-    app.config.dlls.push(Dll { path, selected: false });
+    app.config.dlls.push(Dll {
+        path,
+        selected: false,
+    });
     true
 }
 
@@ -514,7 +554,10 @@ fn menu_on(r: &egui::Response, add: impl FnOnce(&mut egui::Ui)) {
     });
 }
 
-fn space_menu(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> Option<Action>) -> Option<Action> {
+fn space_menu(
+    ui: &mut egui::Ui,
+    add: impl FnOnce(&mut egui::Ui) -> Option<Action>,
+) -> Option<Action> {
     let mut out = None;
     menu_on(&fill(ui), |ui| out = add(ui));
     out
@@ -537,7 +580,8 @@ fn item(ui: &mut egui::Ui, enabled: bool, label: &str) -> bool {
 }
 
 fn btn(ui: &mut egui::Ui, enabled: bool, label: &str, size: Vec2) -> bool {
-    ui.add_enabled(enabled, egui::Button::new(label).min_size(size)).clicked()
+    ui.add_enabled(enabled, egui::Button::new(label).min_size(size))
+        .clicked()
 }
 
 fn row(ui: &mut egui::Ui) -> (Rect, egui::Response) {
