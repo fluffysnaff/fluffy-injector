@@ -5,7 +5,9 @@ use eframe::egui::{
     TextureHandle, UiBuilder, Vec2, Visuals,
 };
 use std::path::Path;
-use std::process::Command;
+use windows::core::{w, PCWSTR};
+use windows::Win32::UI::Shell::ShellExecuteW;
+use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
 const SURFACE: Color32 = Color32::from_rgb(28, 28, 28);
 const RAISED: Color32 = Color32::from_rgb(36, 36, 36);
@@ -540,11 +542,24 @@ fn open_location(path: &str) -> Result<(), String> {
     if !Path::new(path).exists() {
         return Err("DLL file not found.".into());
     }
-    Command::new("explorer")
-        .arg(format!("/select,{path}"))
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("Failed to open location: {e}"))
+    let params: Vec<u16> = format!("/select,\"{path}\"")
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let rc = unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            w!("explorer.exe"),
+            PCWSTR(params.as_ptr()),
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    if (rc.0 as isize) > 32 {
+        return Ok(());
+    }
+    Err(format!("Failed to open location: error {}", rc.0 as isize))
 }
 
 fn menu_on(r: &egui::Response, add: impl FnOnce(&mut egui::Ui)) {
