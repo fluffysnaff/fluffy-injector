@@ -54,7 +54,7 @@ The goal is to make DLL injection straightforward without hiding important contr
 - **🚫 Block list:** Right-click a process to hide it from the list. Right-click empty space in the process panel, open **Blocked**, and select a name to unblock it.
 - **📂 Multi-DLL management:** Adds, selects, injects, and removes one or more DLLs from a persistent list.
 - **📎 DLL context menu:** Right-click a DLL to open its file location, inject it into the selected process, or remove it. Right-click empty space in the DLL list to add a DLL.
-- **⌨️ Headless CLI:** Injects from a terminal with a PID or process name plus one or more DLL paths. No arguments still launches the GUI.
+- **⌨️ Headless CLI:** Injects from a terminal with a PID or process name plus one or more DLL paths. `--copy` and `--random` match the GUI copy-on-inject options. No arguments still launches the GUI.
 - **🚀 Verified injection:** Uses Wraith-backed remote memory operations, Unicode paths, `LoadLibraryW`, and completion checks. Already-mapped modules are left in place instead of calling `LoadLibraryW` again.
 - **📋 Copy on inject:** Injects a temporary copy so the original DLL remains available for rebuilding, with an optional random filename.
 - **💾 Persistent sessions:** Stores DLLs, checked selections, favorites, blocked process names, the last target name, split ratio, window size, and multi-monitor placement in Windows AppData.
@@ -101,12 +101,20 @@ Launching `fluffy_injector.exe` with no arguments still opens the GUI and hides 
 
 ```powershell
 fluffy_injector.exe notepad.exe C:\hooks.dll
+fluffy_injector.exe --copy --random Gw2-64.exe C:\hooks.dll
 fluffy_injector.exe 1234 C:\hooks.dll C:\overlay.dll
 ```
 
-The first argument is a PID if it is all digits, otherwise a case-insensitive process name (`.exe` optional). Every argument after that is a DLL path, resolved against the injector working directory rather than the target process CWD. `-n` / `--name` / `-p` / `--pid` still work as aliases. `-h` / `--help` prints usage and exits `0`.
+Options may appear before or after the process name. The first non-option argument is a PID if it is all digits, otherwise a case-insensitive process name (`.exe` optional). Every later non-option is a DLL path, resolved against the injector working directory rather than the target process CWD.
 
-Copy-on-inject, random names, eject, and window-title targeting stay GUI-only. If several processes share the same name, the CLI lists their PIDs and exits `2` so you can pass a PID. A DLL whose file name is already mapped in the target is treated as success and is not loaded again.
+| Option | Meaning |
+| --- | --- |
+| `-c` / `--copy` | Inject a temp copy so the original DLL stays free to rebuild. |
+| `-r` / `--random` | Give that copy a random file name. Implies `--copy`. |
+| `-n` / `--name` / `-p` / `--pid` | Aliases for the process name or PID. |
+| `-h` / `--help` | Print usage and exit `0`. |
+
+Eject and window-title targeting stay GUI-only. If several processes share the same name, the CLI lists their PIDs and exits `2` so you can pass a PID. A DLL whose file name is already mapped in the target is treated as success and is not loaded again. `--copy` / `--random` still load a new image because the mapped name differs.
 
 | Exit code | Meaning |
 | --- | --- |
