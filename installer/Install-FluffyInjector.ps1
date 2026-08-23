@@ -148,14 +148,16 @@ function Resolve-SourceExe {
 }
 
 function Get-AppVersion([string]$ExePath) {
-    $fromExe = (Get-Item -LiteralPath $ExePath).VersionInfo.ProductVersion
-    if ($fromExe -and $fromExe -ne '0.0.0.0') { return $fromExe }
+    $info = (Get-Item -LiteralPath $ExePath).VersionInfo
+    foreach ($value in @($info.ProductVersion, $info.FileVersion)) {
+        if ($value -and $value -ne '0.0.0.0') { return $value }
+    }
     $root = Get-RepoRoot
-    if (-not $root) { return '0.3.0' }
+    if (-not $root) { return $info.ProductVersion }
     $line = Select-String -Path (Join-Path $root 'Cargo.toml') -Pattern '^\s*version\s*=\s*"([^"]+)"' |
         Select-Object -First 1
     if ($line) { return $line.Matches[0].Groups[1].Value }
-    '0.3.0'
+    $info.ProductVersion
 }
 
 function Resolve-LicensePath([string]$ExePath) {

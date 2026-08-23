@@ -25,8 +25,11 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $ver = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          $meta = cargo metadata --format-version 1 --no-deps --offline | ConvertFrom-Json
+          $ver = ($meta.packages | Where-Object { $_.name -eq 'fluffy_injector' }).version
+          if (-not $ver) { throw 'cargo metadata has no fluffy_injector version' }
           "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Cargo version $ver"
 
       - name: Stage portable package
         shell: pwsh
@@ -42,6 +45,17 @@ jobs:
       - name: Compile setup
         run: |
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ steps.version.outputs.version }} installer\fluffy-injector.iss
+
+      - name: Verify artifacts match Cargo version
+        shell: pwsh
+        run: |
+          $ver = '${{ steps.version.outputs.version }}'
+          $exe = (Get-Item dist/fluffy_injector.exe).VersionInfo.ProductVersion
+          if ($exe -notmatch "^$([regex]::Escape($ver))(\.0)*$") {
+            throw "exe ProductVersion '$exe' does not match Cargo $ver"
+          }
+          $setup = "dist/FluffyInjector-$ver-setup.exe"
+          if (-not (Test-Path $setup)) { throw "setup missing: $setup" }
 
       - uses: actions/upload-artifact@v6
         with:
@@ -60,11 +74,15 @@ jobs:
         run: |
           $ver = '${{ steps.version.outputs.version }}'
           $tag = "v$ver"
+          $setup = "dist/FluffyInjector-$ver-setup.exe"
           gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag already exists"
+          $releaseExists = $LASTEXITCODE -eq 0
+          gh api "repos/$env:GITHUB_REPOSITORY/git/refs/tags/$tag" *> $null
+          $tagExists = $LASTEXITCODE -eq 0
+          if ($releaseExists -or $tagExists) {
+            Write-Host "Tag/release $tag already exists — bump Cargo.toml to publish"
             exit 0
           }
-          gh release create $tag --title $tag --generate-notes `
+          gh release create $tag --target ${{ github.sha }} --title "Fluffy Injector $tag" --notes "## Fluffy Injector $tag" --generate-notes `
             dist/fluffy_injector.exe `
-            "dist/FluffyInjector-$ver-setup.exe"
+            $setup

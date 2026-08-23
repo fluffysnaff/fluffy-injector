@@ -1,6 +1,6 @@
 #define MyAppName "Fluffy Injector"
 #ifndef MyAppVersion
-#define MyAppVersion "0.3.0"
+#error "Pass /DMyAppVersion=x.y.z from Cargo.toml"
 #endif
 #define MyAppPublisher "fluffysnaff"
 #define MyAppURL "https://github.com/fluffysnaff/fluffy-injector"
