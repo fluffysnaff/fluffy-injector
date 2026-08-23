@@ -49,23 +49,54 @@ Source: "installer\Install-FluffyInjector.ps1"; DestDir: "{app}"; Flags: ignorev
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
-[Registry]
-Root: HKA; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Flags: preservestringtype; Check: NeedsAddPath(ExpandConstant('{app}'))
-
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+const
+  MachinePathKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
+
+function QueryPath(var OrigPath: string): Boolean;
+begin
+  if IsAdminInstallMode() then
+    Result := RegQueryStringValue(HKEY_LOCAL_MACHINE, MachinePathKey, 'Path', OrigPath)
+  else
+    Result := RegQueryStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', OrigPath);
+end;
+
+procedure WritePath(const NewPath: string);
+begin
+  if IsAdminInstallMode() then
+    RegWriteStringValue(HKEY_LOCAL_MACHINE, MachinePathKey, 'Path', NewPath)
+  else
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', NewPath);
+end;
+
 function NeedsAddPath(Param: string): Boolean;
 var
   OrigPath: string;
 begin
-  if not RegQueryStringValue(HKA, 'Environment', 'Path', OrigPath) then
+  if not QueryPath(OrigPath) then
   begin
     Result := True;
     exit;
   end;
   Result := Pos(';' + Uppercase(Param) + ';', ';' + Uppercase(OrigPath) + ';') = 0;
+end;
+
+procedure AddAppPath(const AppDir: string);
+var
+  OrigPath, NewPath: string;
+begin
+  if not NeedsAddPath(AppDir) then
+    Exit;
+  if not QueryPath(OrigPath) then
+    OrigPath := '';
+  if OrigPath <> '' then
+    NewPath := OrigPath + ';' + AppDir
+  else
+    NewPath := AppDir;
+  WritePath(NewPath);
 end;
 
 procedure RemoveAppPath(const AppDir: string);
@@ -74,7 +105,7 @@ var
   Wrapped: string;
   Position: Integer;
 begin
-  if not RegQueryStringValue(HKA, 'Environment', 'Path', OrigPath) then
+  if not QueryPath(OrigPath) then
     Exit;
   Wrapped := ';' + OrigPath + ';';
   Position := Pos(';' + AppDir + ';', Wrapped);
@@ -85,7 +116,13 @@ begin
     OrigPath := Copy(Wrapped, 2, Length(Wrapped) - 2)
   else
     OrigPath := '';
-  RegWriteExpandStringValue(HKA, 'Environment', 'Path', OrigPath);
+  WritePath(OrigPath);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    AddAppPath(ExpandConstant('{app}'));
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
