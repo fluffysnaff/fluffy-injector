@@ -67,9 +67,27 @@ The goal is to make DLL injection straightforward without hiding important contr
 
 ### For Users (Recommended)
 
-1. **Download:** Download and extract the `release-build` artifact from the latest successful [GitHub Actions build](https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml), or download `fluffy_injector.exe` from a published [GitHub Release](https://github.com/fluffysnaff/fluffy-injector/releases).
-2. **Run:** Launch `fluffy_injector.exe`. No installation is required.
-3. **Inject:**
+1. **Download:** Prefer a [GitHub Release](https://github.com/fluffysnaff/fluffy-injector/releases) (`FluffyInjector-*-setup.exe` and `fluffy_injector.exe`). A new `version` in `Cargo.toml` on `main` publishes that Release. Every build also uploads a portable `release-build` artifact from [GitHub Actions](https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml).
+2. **Install (recommended):** Run the setup exe, or from the extracted zip:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-FluffyInjector.ps1
+   ```
+
+   Per-user is the default (`%LOCALAPPDATA%\Programs\Fluffy Injector`). It adds that folder to your user PATH, creates a Start Menu shortcut, and registers **Apps & features** uninstall. Machine-wide:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-FluffyInjector.ps1 -Scope Machine
+   ```
+
+   From a source checkout, `-Build` compiles a release binary first, then installs it. Uninstall from **Apps & features**, or:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-FluffyInjector.ps1 -Uninstall
+   ```
+
+3. **Or run portable:** Launch `fluffy_injector.exe` with no install. The CLI will not be on PATH.
+4. **Inject:**
    - Select a target process from the left panel.
    - Optionally right-click a process to **Favorite** it or **Block** it from the list.
    - To restore a blocked process, right-click empty space in the process list and choose it under **Blocked**.
@@ -93,16 +111,24 @@ rustup toolchain install nightly
 cargo +nightly build --release
 ```
 
-The executable is written to `target\release\fluffy_injector.exe`.
+The executable is written to `target\release\fluffy_injector.exe`. To install that build onto PATH and the Start Menu:
+
+```powershell
+.\installer\Install-FluffyInjector.ps1
+```
+
+Or `.\installer\Install-FluffyInjector.ps1 -Build` to compile and install in one step. CI also compiles `installer\fluffy-injector.iss` with Inno Setup 6 into `FluffyInjector-<version>-setup.exe`.
 
 ### Headless CLI
 
 Launching `fluffy_injector.exe` with no arguments still opens the GUI and hides the console. Any other argument stays in the terminal so scripts and post-build steps get stdout, stderr, and the exit code. Opening the GUI from Explorer can flash a console window briefly.
 
+After a PATH install, `fluffy_injector` works from a new terminal. Portable or repo builds need the full exe path.
+
 ```powershell
-fluffy_injector.exe notepad.exe C:\hooks.dll
-fluffy_injector.exe --copy --random Gw2-64.exe C:\hooks.dll
-fluffy_injector.exe 1234 C:\hooks.dll C:\overlay.dll
+fluffy_injector notepad.exe C:\hooks.dll
+fluffy_injector --copy --random Gw2-64.exe C:\hooks.dll
+fluffy_injector 1234 C:\hooks.dll C:\overlay.dll
 ```
 
 Options may appear before or after the process name. The first non-option argument is a PID if it is all digits, otherwise a case-insensitive process name (`.exe` optional). Every later non-option is a DLL path, resolved against the injector working directory rather than the target process CWD.

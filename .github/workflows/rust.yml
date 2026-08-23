@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -18,7 +21,50 @@ jobs:
       - name: Build release
         run: cargo build --release
 
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $ver = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Stage portable package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/fluffy_injector.exe dist/
+          Copy-Item LICENSE dist/
+          Copy-Item installer/Install-FluffyInjector.ps1 dist/
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Compile setup
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ steps.version.outputs.version }} installer\fluffy-injector.iss
+
       - uses: actions/upload-artifact@v6
         with:
           name: release-build
-          path: target/release/fluffy_injector.exe
+          path: |
+            dist/fluffy_injector.exe
+            dist/LICENSE
+            dist/Install-FluffyInjector.ps1
+            dist/FluffyInjector-*-setup.exe
+
+      - name: Publish GitHub Release if version is new
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $ver = '${{ steps.version.outputs.version }}'
+          $tag = "v$ver"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists"
+            exit 0
+          }
+          gh release create $tag --title $tag --generate-notes `
+            dist/fluffy_injector.exe `
+            "dist/FluffyInjector-$ver-setup.exe"
