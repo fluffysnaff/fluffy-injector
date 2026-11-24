@@ -1,0 +1,25 @@
+{
+  "slug": "fluffy-injector-readme",
+  "brand": {
+    "name": "Fluffy Injector",
+    "monogram": "FI",
+    "logo": "../../../../assets/icon.svg",
+    "style": "signal",
+    "palette": "legacy",
+    "colors": { "accent2": "#ff5fb8" },
+    "fonts": { "display": "Sora", "body": "Inter" }
+  },
+  "output": { "duration": 4, "intro": false },
+  "sections": [
+    {
+      "id": "banner",
+      "template": "strip",
+      "eyebrow": "DLL injector for Windows",
+      "title": "Fluffy __Injector__",
+      "tagline": "Pick a process. Add your DLLs. Inject.",
+      "chips": ["Desktop app", "Command line", "Written in Rust"],
+      "image": "../../../../assets/icon.svg",
+      "imageShape": "free"
+    }
+  ]
+}

@@ -1,181 +1,82 @@
-# 🦀 Fluffy Injector
-
 <p align="center">
-  <a href="https://github.com/fluffysnaff/fluffy-injector">
-    <img src="https://github.com/fluffysnaff/fluffy-injector/raw/main/assets/icon.png" alt="Fluffy Injector Logo" width="150">
+  <a href="https://github.com/fluffysnaff/fluffy-injector/releases/latest">
+    <img src="docs/assets/readme/banner.png" alt="Fluffy Injector, a DLL injector for Windows with a desktop app and a command line" width="750">
   </a>
 </p>
 
-**Fluffy Injector is an open-source Windows DLL injector written in Rust, with a native desktop interface, live process tracking, and a headless CLI. Explore more projects at [fluffysnaff.xyz](https://fluffysnaff.xyz) or on [GitHub](https://github.com/fluffysnaff).**
-
 <p align="center">
-    <a href="https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml"><img src="https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml/badge.svg" alt="Build Status"></a>
-    <a href="https://github.com/fluffysnaff/fluffy-injector/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
-    <img src="https://img.shields.io/badge/Made%20with-Rust-orange.svg" alt="Made with Rust">
-    <img src="https://img.shields.io/badge/Platform-Windows-0078D6.svg" alt="Platform: Windows">
+  <b>Soft name. Sharp needle. One-click DLL injection for Windows.</b><br>
+  Pick a running process, add your DLLs, and select Inject. Then run the same thing from your terminal.
 </p>
 
----
-
-> ⚠️ **Disclaimer: For Educational Use Only**
->
-> This tool is intended strictly for **educational and development purposes**, such as working with software you own or are authorized to inspect. Injecting DLLs into arbitrary processes can cause **application crashes, system instability, or anti-cheat penalties**.
->
-> **Use this tool responsibly and ethically.** The author (`fluffysnaff`) is not responsible for any damage or consequences resulting from its misuse.
-
----
-
-## 🖼️ GUI Preview
-
 <p align="center">
-  <img src="https://github.com/fluffysnaff/fluffy-injector/raw/main/assets/screenshot.png" alt="Fluffy Injector UI Screenshot">
+  <a href="https://github.com/fluffysnaff/fluffy-injector/releases/latest"><b>Download for Windows</b></a> |
+  <a href="docs/cli.md">Command line</a> |
+  <a href="docs/building.md">Build from source</a>
 </p>
 
----
+<p align="center">
+  <a href="https://github.com/fluffysnaff/fluffy-injector/releases/latest"><img src="https://img.shields.io/github/v/release/fluffysnaff/fluffy-injector?color=a855f7&label=release" alt="Latest release"></a>
+  <a href="https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml"><img src="https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml/badge.svg" alt="Build status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-ff5fb8" alt="MIT license"></a>
+</p>
 
-## What is Fluffy Injector?
+<p align="center">
+  <img src="assets/screenshot.png" alt="Fluffy Injector with a favorite process selected, two DLLs checked, and Copy on inject turned on" width="680">
+</p>
 
-**Fluffy Injector** is a focused Windows desktop injector with an optional headless CLI for scripts and post-build steps. It is designed for controlled development, research, and modification workflows:
+## Why you will like it
 
-- **Developers:** Load custom DLLs while developing software.
-- **Security researchers:** Analyze process behavior and interactions.
-- **Modders and enthusiasts:** Experiment with authorized application modifications.
+**Rebuild while your DLL is loaded.** Windows locks a loaded DLL, so your next build fails. Turn on **Copy on inject** and the target loads a temporary copy. Your original file stays free for the compiler.
 
-The goal is to make DLL injection straightforward without hiding important controls or results.
+**Restart your target without starting over.** The process list refreshes about twice per second. When your program closes and opens again, Fluffy Injector selects the new process by name.
 
----
+**Set it up once.** Your DLL list, checked items, favorites, last target, and window layout are saved. Favorites stay at the top. Processes you block stay out of the list.
 
-## ✨ Key Features
+**Know what happened.** Fluffy Injector waits for Windows to finish loading each DLL, then reports success or the error. A DLL that is already loaded is left alone.
 
-- **🔍 Native process scanning:** Lists running processes with their names, PIDs, and available application icons.
-- **⚡ Live filtering:** Searches the process list as you type.
-- **🔄 Automatic process tracking:** Removes terminated processes and reacquires a same-name replacement without a manual refresh.
-- **⭐ Favorites:** Right-click a process to favorite or unfavorite it. Favorites stay pinned at the top of the list.
-- **🚫 Block list:** Right-click a process to hide it from the list. Right-click empty space in the process panel, open **Blocked**, and select a name to unblock it.
-- **📂 Multi-DLL management:** Adds, selects, injects, and removes one or more DLLs from a persistent list.
-- **📎 DLL context menu:** Right-click a DLL to open its file location, inject it into the selected process, or remove it. Right-click empty space in the DLL list to add a DLL.
-- **⌨️ Headless CLI:** Injects from a terminal with a PID or process name plus one or more DLL paths. `--copy` and `--random` match the GUI copy-on-inject options. No arguments still launches the GUI.
-- **🚀 Verified injection:** Uses Wraith-backed remote memory operations, Unicode paths, `LoadLibraryW`, and completion checks. Already-mapped modules are left in place instead of calling `LoadLibraryW` again.
-- **📋 Copy on inject:** Injects a temporary copy so the original DLL remains available for rebuilding, with an optional random filename.
-- **💾 Persistent sessions:** Stores DLLs, checked selections, favorites, blocked process names, the last target name, split ratio, window size, and multi-monitor placement in Windows AppData.
-- **🎨 Native dark interface:** Uses `eframe` for a responsive Windows desktop experience, including a resizable process / DLL split.
-- **🔔 Toast notifications:** Reports successful injections, warnings, and failures without blocking the interface.
+**Click or script.** One executable is both the desktop app and the command-line tool.
 
----
+## Where it fits
 
-## 🚀 Getting Started
+- **You develop a plugin or overlay.** Run one command after each build and test the new DLL right away.
+- **You study how a program behaves.** Load your own logging DLL into a process you are allowed to inspect.
+- **You make mods.** Load several DLLs at once into an application that permits it.
 
-### For Users (Recommended)
+## Get started
 
-1. **Download:** Prefer a [GitHub Release](https://github.com/fluffysnaff/fluffy-injector/releases) (`FluffyInjector-*-setup.exe` and `fluffy_injector.exe`). A new `version` in `Cargo.toml` on `main` publishes that Release. Every build also uploads a portable `release-build` artifact from [GitHub Actions](https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml).
-2. **Install (recommended):** Run the setup exe, or from the extracted zip:
+1. Download the [latest release](https://github.com/fluffysnaff/fluffy-injector/releases/latest).
+   - `FluffyInjector-<version>-setup.exe` installs the app and adds the command to your PATH.
+   - `fluffy_injector.exe` runs without installing.
+2. Select a process on the left.
+3. Select **Add DLL** and check the files you want.
+4. Select **Inject**.
 
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-FluffyInjector.ps1
-   ```
+Right-click a process to favorite or block it. To unblock one, right-click empty space in the process list and open **Blocked**. Right-click a DLL to inject it alone, open its folder, or remove it.
 
-   Per-user is the default (`%LOCALAPPDATA%\Programs\Fluffy Injector`). It adds that folder to your user PATH, creates a Start Menu shortcut, and registers **Apps & features** uninstall. Machine-wide:
+The setup program requires 64-bit Windows 10 or later. Fluffy Injector loads 64-bit DLLs into 64-bit processes. If the target runs as administrator, run Fluffy Injector as administrator too.
 
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-FluffyInjector.ps1 -Scope Machine
-   ```
-
-   From a source checkout, `-Build` compiles a release binary first, then installs it. Uninstall from **Apps & features**, or:
-
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-FluffyInjector.ps1 -Uninstall
-   ```
-
-3. **Or run portable:** Launch `fluffy_injector.exe` with no install. The CLI will not be on PATH.
-4. **Inject:**
-   - Select a target process from the left panel.
-   - Optionally right-click a process to **Favorite** it or **Block** it from the list.
-   - To restore a blocked process, right-click empty space in the process list and choose it under **Blocked**.
-   - Select **Add DLL** for each DLL you want to add, or right-click empty space in the DLL list → **Add DLL**.
-   - Check every DLL you want to inject, or right-click a DLL for **Open file location**, **Inject**, or **Delete**.
-   - Optionally enable **Copy on inject** and **Random name**.
-   - Select **Inject** (or use **Inject** from a DLL’s context menu for a single file).
-
-### For Developers (Building from Source)
-
-Requirements:
-
-- Windows with the MSVC C++ build tools
-- [Rust nightly](https://rustup.rs/)
-- Git
+## Use it from your build script
 
 ```powershell
-git clone https://github.com/fluffysnaff/fluffy-injector.git
-cd fluffy-injector
-rustup toolchain install nightly
-cargo +nightly build --release
-```
-
-The executable is written to `target\release\fluffy_injector.exe`. To install that build onto PATH and the Start Menu:
-
-```powershell
-.\installer\Install-FluffyInjector.ps1
-```
-
-Or `.\installer\Install-FluffyInjector.ps1 -Build` to compile and install in one step. CI also compiles `installer\fluffy-injector.iss` with Inno Setup 6 into `FluffyInjector-<version>-setup.exe`.
-
-### Headless CLI
-
-Launching `fluffy_injector.exe` with no arguments still opens the GUI and hides the console. Any other argument stays in the terminal so scripts and post-build steps get stdout, stderr, and the exit code. Opening the GUI from Explorer can flash a console window briefly.
-
-After a PATH install, `fluffy_injector` works from a new terminal. Portable or repo builds need the full exe path.
-
-```powershell
+# Inject one DLL by process name
 fluffy_injector notepad.exe C:\hooks.dll
-fluffy_injector --copy --random Gw2-64.exe C:\hooks.dll
+
+# Keep the original file free for the next build
+fluffy_injector --copy notepad.exe C:\hooks.dll
+
+# Inject several DLLs by process ID
 fluffy_injector 1234 C:\hooks.dll C:\overlay.dll
 ```
 
-Options may appear before or after the process name. The first non-option argument is a PID if it is all digits, otherwise a case-insensitive process name (`.exe` optional). Every later non-option is a DLL path, resolved against the injector working directory rather than the target process CWD.
+Exit code `0` means every DLL is loaded. See the [command-line guide](docs/cli.md) for all options and exit codes.
 
-| Option | Meaning |
-| --- | --- |
-| `-c` / `--copy` | Inject a temp copy so the original DLL stays free to rebuild. |
-| `-r` / `--random` | Give that copy a random file name. Implies `--copy`. |
-| `-n` / `--name` / `-p` / `--pid` | Aliases for the process name or PID. |
-| `-h` / `--help` | Print usage and exit `0`. |
+## Contribute
 
-Eject and window-title targeting stay GUI-only. If several processes share the same name, the CLI lists their PIDs and exits `2` so you can pass a PID. A DLL whose file name is already mapped in the target is treated as success and is not loaded again. `--copy` / `--random` still load a new image because the mapped name differs.
+Found a bug or have an idea? [Open an issue](https://github.com/fluffysnaff/fluffy-injector/issues). Please open one before sending a pull request, so we can agree on the change first.
 
-| Exit code | Meaning |
-| --- | --- |
-| `0` | GUI not involved; every requested DLL is mapped (injected or already present). `--help` also exits `0`. |
-| `1` | Injection failed, including a missing DLL file. |
-| `2` | Bad arguments, process not found, or an ambiguous process name. |
+Built with [eframe](https://crates.io/crates/eframe), [wraith-rs](https://crates.io/crates/wraith-rs), and [windows-rs](https://github.com/microsoft/windows-rs). Released under the [MIT License](LICENSE).
 
----
-
-## 🛠️ Technology Stack
-
-- **[eframe](https://crates.io/crates/eframe):** Desktop application framework and persistent window state.
-- **[wraith-rs](https://crates.io/crates/wraith-rs):** Remote process access, memory operations, module discovery, and allocation cleanup.
-- **[windows-rs](https://github.com/microsoft/windows-rs):** Windows process snapshots, thread creation, executable icons, and native handles.
-- **[rfd](https://github.com/PolyMeilex/rfd):** Native DLL file selection.
-- **[Serde](https://serde.rs/) and [RON](https://github.com/ron-rs/ron):** Persistent application settings.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Whether you have ideas for new features, bug fixes, or code improvements, your help is appreciated.
-
-- **Report issues:** Open an issue on the [GitHub Issues page](https://github.com/fluffysnaff/fluffy-injector/issues).
-- **Suggest features:** Start a discussion by creating an issue.
-- **Submit pull requests:** Open an issue first to discuss the proposed change and confirm it fits the project.
-
----
-
-## 📜 License
-
-This project is licensed under the **MIT License**. See the [LICENSE](https://github.com/fluffysnaff/fluffy-injector/blob/main/LICENSE) file for full details.
-
----
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=fluffysnaff/fluffy-injector&type=Date)](https://www.star-history.com/#fluffysnaff/fluffy-injector&Date)
+<a href="https://www.star-history.com/#fluffysnaff/fluffy-injector&Date">
+  <img src="https://api.star-history.com/svg?repos=fluffysnaff/fluffy-injector&type=Date" alt="Star history chart" width="600">
+</a>
