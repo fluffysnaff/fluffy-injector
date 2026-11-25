@@ -1,83 +1,392 @@
-use crate::core::{icon_loader, injector, process_scanner};
-use crate::models::{Config, ProcessInfo, Toast, ToastLevel};
-use eframe::egui::{self, ColorImage, Context, TextureHandle};
+use crate::core::{
+    icon_loader::{self, IconData, IconRequest},
+    injector, process_scanner,
+};
+use crate::models::{Config, Dll, Notice, ProcessInfo, StoredPlacement, ToastLevel};
+use crate::settings::SettingsWriter;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::thread;
+use std::time::{Duration, Instant};
+use taut::{FileDialog, Picture, Theme, Ui, Waker};
+
+const BACKGROUND_BATCH: usize = 16;
+const MAX_ICON_REQUESTS: usize = 24;
+const WORKER_CHECK: Duration = Duration::from_millis(150);
 
 pub(crate) enum BackgroundMessage {
     Processes(Vec<ProcessInfo>),
-    Icon((u32, ColorImage)),
-    Injection(usize, Vec<String>),
-    Error(String),
+    ScanError(String),
+    SettingsSaved(u64, Result<(), String>),
+}
+
+enum IconState {
+    Pending,
+    Ready(Option<Picture>),
+}
+
+impl IconState {
+    fn picture(&self) -> Option<Picture> {
+        match self {
+            Self::Ready(picture) => *picture,
+            Self::Pending => None,
+        }
+    }
+}
+
+struct InjectionResult {
+    total: usize,
+    failures: Vec<String>,
+    cleanup_warnings: Vec<String>,
 }
 
 pub(crate) struct InjectorApp {
     pub processes: Vec<ProcessInfo>,
+    pub process_rows: Vec<(usize, bool)>,
     pub selected_process: Option<u32>,
     pub config: Config,
     pub is_loading_processes: bool,
-    pub icon_cache: HashMap<u32, TextureHandle>,
-    pub default_dll_texture: TextureHandle,
-    pub toasts: Vec<Toast>,
-    pub is_injecting: bool,
+    pub scan_failed: bool,
+    icon_cache: HashMap<PathBuf, IconState>,
+    dll_icon: Option<IconState>,
     pub process_search: String,
-    pub process_search_lower: String,
+    pub dll_menu: Option<usize>,
+    pub settings_writable: bool,
+    theme: Theme,
+    notices: Vec<Notice>,
+    next_notice: u64,
+    settings: Option<SettingsWriter>,
+    close_after_save: Option<Instant>,
+    files: FileDialog,
     background_rx: Receiver<BackgroundMessage>,
     background_tx: Sender<BackgroundMessage>,
-    icon_tx: Sender<(u32, std::path::PathBuf)>,
+    icon_worker: Option<icon_loader::Worker>,
+    scan_stop: Option<Sender<()>>,
+    injection: Option<Receiver<InjectionResult>>,
 }
 
 impl InjectorApp {
-    pub(crate) fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let config = Config::load(cc.storage);
+    pub(crate) fn new(config: Config) -> Self {
         let (background_tx, background_rx) = mpsc::channel();
-        let (icon_tx, icon_rx) = mpsc::channel();
-        spawn_workers(&cc.egui_ctx, &background_tx, icon_rx);
-        crate::ui::apply_theme(&cc.egui_ctx);
+        let mut files = FileDialog::native();
+        files.only(&[".dll"]);
+
         Self {
             processes: Vec::new(),
+            process_rows: Vec::new(),
             selected_process: None,
             config,
+            is_loading_processes: true,
+            scan_failed: false,
+            icon_cache: HashMap::new(),
+            dll_icon: None,
+            process_search: String::new(),
+            dll_menu: None,
+            settings_writable: true,
+            theme: crate::ui::theme(),
+            notices: Vec::new(),
+            next_notice: 0,
+            settings: None,
+            close_after_save: None,
+            files,
             background_rx,
             background_tx,
-            icon_tx,
-            is_loading_processes: true,
-            icon_cache: HashMap::new(),
-            default_dll_texture: load_default_dll_icon(&cc.egui_ctx),
-            toasts: Vec::new(),
-            is_injecting: false,
-            process_search: String::new(),
-            process_search_lower: String::new(),
+            icon_worker: None,
+            scan_stop: None,
+            injection: None,
         }
     }
 
-    fn update_icon(&mut self, ctx: &Context, (pid, image): (u32, ColorImage)) {
-        let texture = ctx.load_texture(format!("icon_{pid}"), image, Default::default());
-        self.icon_cache.insert(pid, texture);
+    pub(crate) fn describe(&mut self, ui: &mut Ui) {
+        ui.theme = self.theme;
+        let held_close = self.hold_close_for_save(ui);
+        if self.scan_stop.is_none() {
+            let (stop_tx, stop_rx) = mpsc::channel();
+            self.scan_stop = Some(stop_tx);
+            let process_tx = self.background_tx.clone();
+            thread::spawn(move || process_scanner::scan_loop(process_tx, stop_rx));
+            self.icon_worker = Some(icon_loader::Worker::spawn());
+        }
+        let mut received = 0;
+        while received < BACKGROUND_BATCH {
+            let Ok(message) = self.background_rx.try_recv() else {
+                break;
+            };
+            received += 1;
+            self.apply_background_message(ui, message);
+        }
+        if received == BACKGROUND_BATCH {
+            ui.wake_after(Duration::ZERO);
+        } else if self
+            .settings
+            .as_mut()
+            .is_some_and(SettingsWriter::worker_stopped)
+        {
+            self.save_finished(Some("The settings writer stopped unexpectedly.".into()));
+        }
+        self.poll_icons(ui);
+        self.poll_injection(ui);
+        if self.request_icons() {
+            ui.wake_after(WORKER_CHECK);
+        }
+
+        let mut changed = crate::ui::show(ui, self);
+        if !self.files.shown && ui.popup_anchor().is_none() && ui.keys("Ctrl+O") {
+            self.pick_dll();
+        }
+        if let Some(path) = ui.file_dialog(&mut self.files) {
+            if self.add_dll(path) {
+                changed = true;
+                ui.rerun();
+            }
+        }
+        if let Some(window) = ui.window_placement() {
+            let placement = StoredPlacement {
+                position: window.position,
+                width: window.width,
+                height: window.height,
+                maximized: window.maximized,
+            };
+            if self.config.window != Some(placement) {
+                self.config.window = Some(placement);
+                changed = true;
+            }
+        }
+        if changed && self.settings_writable {
+            if !self
+                .settings
+                .get_or_insert_with(|| SettingsWriter::new(self.background_tx.clone()))
+                .submit(&self.config)
+            {
+                self.save_finished(Some("The settings writer stopped unexpectedly.".into()));
+            }
+        }
+        if self.settings.as_ref().is_some_and(SettingsWriter::saving) {
+            ui.wake_after(WORKER_CHECK);
+        }
+        self.handle_close(ui, held_close);
+        let now = Instant::now();
+        self.notices.retain(|notice| notice.expires > now);
+        crate::ui::show_notices(ui, &self.notices, now);
     }
 
-    fn update_processes(&mut self, mut processes: Vec<ProcessInfo>) {
-        let live: HashSet<u32> = processes.iter().map(|p| p.pid).collect();
-        self.icon_cache.retain(|pid, _| live.contains(pid));
-        order_by_favorite(&mut processes, &self.config);
-        let last = self
+    fn apply_background_message(&mut self, ui: &mut Ui, message: BackgroundMessage) {
+        match message {
+            BackgroundMessage::Processes(processes) => self.update_processes(ui, processes),
+            BackgroundMessage::ScanError(error) => {
+                self.is_loading_processes = false;
+                self.scan_failed = true;
+                self.add_toast(ToastLevel::Error, error);
+            }
+            BackgroundMessage::SettingsSaved(revision, result) => {
+                if self
+                    .settings
+                    .as_mut()
+                    .is_some_and(|writer| writer.acknowledge(revision, result.is_ok()))
+                {
+                    self.save_finished(
+                        result
+                            .err()
+                            .map(|error| format!("Failed to save settings: {error}")),
+                    );
+                }
+            }
+        }
+    }
+
+    fn save_finished(&mut self, error: Option<String>) {
+        if let Some(error) = error {
+            self.close_after_save = None;
+            self.add_toast(ToastLevel::Error, error);
+        } else if self.close_after_save.is_some() {
+            self.add_toast(ToastLevel::Success, "Settings saved.");
+            self.close_after_save = Some(Instant::now() + Duration::from_secs(1));
+        }
+    }
+
+    fn hold_close_for_save(&mut self, ui: &mut Ui) -> bool {
+        if ui.close_requested() && self.settings.as_ref().is_some_and(SettingsWriter::saving) {
+            ui.cancel_close("Saving settings");
+            self.close_after_save = Some(Instant::now());
+            return true;
+        }
+        false
+    }
+
+    fn handle_close(&mut self, ui: &mut Ui, held_close: bool) {
+        if !held_close && ui.close_requested() {
+            self.hold_close_for_save(ui);
+        } else if let Some(until) = self.close_after_save {
+            if self.settings.as_ref().is_some_and(SettingsWriter::unsaved) {
+                return;
+            }
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                ui.quit();
+            } else {
+                ui.wake_after(left);
+            }
+        }
+    }
+
+    fn update_processes(&mut self, ui: &mut Ui, processes: Vec<ProcessInfo>) {
+        let live: HashSet<&Path> = processes.iter().map(|p| p.exe.as_path()).collect();
+        self.icon_cache.retain(|path, state| {
+            // Keep one request per path even if it disappears before the reply.
+            let keep = matches!(state, IconState::Pending) || live.contains(path.as_path());
+            if let (false, IconState::Ready(Some(picture))) = (keep, state) {
+                ui.drop_picture(*picture);
+            }
+            keep
+        });
+        self.processes = processes;
+        self.rebuild_process_rows();
+        self.resolve_selection();
+        self.is_loading_processes = false;
+        self.scan_failed = false;
+    }
+
+    fn poll_icons(&mut self, ui: &mut Ui) {
+        for _ in 0..BACKGROUND_BATCH {
+            let Some(worker) = &self.icon_worker else {
+                return;
+            };
+            match worker.results.try_recv() {
+                Ok((request, data)) => self.apply_icon(ui, request, data),
+                Err(TryRecvError::Empty) => return,
+                Err(TryRecvError::Disconnected) => {
+                    self.icon_worker = None;
+                    self.icon_cache
+                        .retain(|_, state| matches!(state, IconState::Ready(_)));
+                    self.add_toast(ToastLevel::Warning, "The icon worker stopped unexpectedly.");
+                    return;
+                }
+            }
+        }
+        ui.wake_after(Duration::ZERO);
+    }
+
+    fn apply_icon(&mut self, ui: &mut Ui, request: IconRequest, data: IconData) {
+        let ready = || IconState::Ready(data.map(|(width, pixels)| ui.add_picture(width, pixels)));
+        match request {
+            IconRequest::Dll => self.dll_icon = Some(ready()),
+            IconRequest::Process(path) => {
+                if self.processes.iter().any(|process| process.exe == path) {
+                    self.icon_cache.insert(path, ready());
+                } else {
+                    self.icon_cache.remove(&path);
+                }
+            }
+        }
+    }
+
+    fn request_icons(&mut self) -> bool {
+        let Some(worker) = &self.icon_worker else {
+            return false;
+        };
+        let mut pending = self
+            .icon_cache
+            .values()
+            .chain(self.dll_icon.iter())
+            .filter(|state| matches!(state, IconState::Pending))
+            .count();
+        if self.dll_icon.is_none() && !self.config.dlls.is_empty() && pending < MAX_ICON_REQUESTS {
+            if worker.requests.send(IconRequest::Dll).is_err() {
+                return true;
+            }
+            self.dll_icon = Some(IconState::Pending);
+            pending += 1;
+        }
+        for process in &self.processes {
+            if pending == MAX_ICON_REQUESTS {
+                break;
+            }
+            if process.exe.as_os_str().is_empty() || self.icon_cache.contains_key(&process.exe) {
+                continue;
+            }
+            if worker
+                .requests
+                .send(IconRequest::Process(process.exe.clone()))
+                .is_err()
+            {
+                return true;
+            }
+            self.icon_cache
+                .insert(process.exe.clone(), IconState::Pending);
+            pending += 1;
+        }
+        pending != 0
+    }
+
+    pub(crate) fn process_icon(&self, path: &Path) -> Option<Picture> {
+        self.icon_cache.get(path).and_then(IconState::picture)
+    }
+
+    pub(crate) fn dll_icon(&self) -> Option<Picture> {
+        self.dll_icon.as_ref().and_then(IconState::picture)
+    }
+
+    pub(crate) fn rebuild_process_rows(&mut self) {
+        let query = self.process_search.as_bytes();
+        self.process_rows.clear();
+        self.process_rows
+            .extend(
+                self.processes
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, process)| {
+                        let matches = query.is_empty()
+                            || process
+                                .name
+                                .as_bytes()
+                                .windows(query.len())
+                                .any(|part| part.eq_ignore_ascii_case(query));
+                        (matches && !self.config.is_blocked(&process.name))
+                            .then(|| (index, self.config.is_favorite(&process.name)))
+                    }),
+            );
+        self.process_rows.sort_by_key(|&(_, favorite)| !favorite);
+    }
+
+    pub(crate) fn resolve_selection(&mut self) {
+        self.selected_process = self.remembered_matches().and_then(|mut matches| {
+            if let Some(pid) = self
+                .selected_process
+                .filter(|&pid| matches.clone().any(|process| process.pid == pid))
+            {
+                return Some(pid);
+            }
+            let first = matches.next()?;
+            matches.next().is_none().then_some(first.pid)
+        });
+    }
+
+    pub(crate) fn multiple_matches(&self) -> bool {
+        self.selected_process.is_none()
+            && self
+                .remembered_matches()
+                .is_some_and(|mut matches| matches.nth(1).is_some())
+    }
+
+    fn remembered_matches(&self) -> Option<impl Iterator<Item = &ProcessInfo> + Clone> {
+        let name = self
             .config
             .last_selected_app
             .as_deref()
-            .filter(|name| !self.config.is_blocked(name));
-        self.selected_process = resolve_selection(&processes, self.selected_process, last);
-        self.processes = processes;
-        self.is_loading_processes = false;
-        request_missing_icons(&self.processes, &self.icon_cache, &self.icon_tx);
+            .filter(|name| !self.config.is_blocked(name))?;
+        Some(
+            self.processes
+                .iter()
+                .filter(move |process| process.name.eq_ignore_ascii_case(name)),
+        )
     }
 
-    pub(crate) fn order_processes_by_favorite(&mut self) {
-        order_by_favorite(&mut self.processes, &self.config);
-    }
-
-    pub(crate) fn sync_process_search_lower(&mut self) {
-        self.process_search_lower = self.process_search.to_ascii_lowercase();
+    pub(crate) fn selected_row(&self) -> Option<usize> {
+        let pid = self.selected_process?;
+        self.process_rows
+            .iter()
+            .position(|&(index, _)| self.processes[index].pid == pid)
     }
 
     pub(crate) fn selected_process_info(&self) -> Option<&ProcessInfo> {
@@ -86,16 +395,63 @@ impl InjectorApp {
     }
 
     pub(crate) fn add_toast(&mut self, level: ToastLevel, message: impl Into<String>) {
-        self.toasts.push(Toast::new(level, message));
+        self.notices.push(Notice {
+            id: self.next_notice,
+            level,
+            message: message.into(),
+            expires: Instant::now() + Duration::from_secs(3),
+        });
+        self.next_notice += 1;
     }
 
-    fn persist_config(&mut self, storage: &mut dyn eframe::Storage) {
-        if let Err(error) = self.config.save(storage) {
-            self.add_toast(
-                ToastLevel::Error,
-                format!("Failed to save settings: {error}"),
-            );
+    pub(crate) fn pick_dll(&mut self) {
+        let folder = if self.files.folder.is_dir() {
+            self.files.folder.clone()
+        } else {
+            std::env::current_dir().unwrap_or_default()
+        };
+        self.files.pick(folder);
+    }
+
+    pub(crate) fn add_dll(&mut self, path: PathBuf) -> bool {
+        match self.validate_dll(&path) {
+            Ok(path) => self.config.dlls.push(Dll {
+                path,
+                selected: false,
+            }),
+            Err(error) => {
+                self.add_toast(ToastLevel::Warning, format!("{}: {error}", path.display()));
+                return false;
+            }
         }
+        true
+    }
+
+    fn validate_dll(&self, path: &Path) -> Result<String, &'static str> {
+        if !path.is_file() {
+            return Err("File not found.");
+        }
+        if !path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("dll"))
+        {
+            return Err("Choose a .dll file.");
+        }
+        let identity = path
+            .canonicalize()
+            .map_err(|_| "Could not resolve file path.")?;
+        if self.config.dlls.iter().any(|dll| {
+            Path::new(&dll.path)
+                .canonicalize()
+                .is_ok_and(|stored| stored == identity)
+        }) {
+            return Err("DLL is already in the list.");
+        }
+        let stored = if path.is_absolute() { path } else { &identity };
+        stored
+            .to_str()
+            .map(str::to_owned)
+            .ok_or("File path is not valid Unicode.")
     }
 
     pub(crate) fn selected_dlls(&self) -> impl Iterator<Item = &str> {
@@ -105,33 +461,61 @@ impl InjectorApp {
             .filter_map(|dll| dll.selected.then_some(dll.path.as_str()))
     }
 
-    pub(crate) fn start_injection(&mut self, ctx: &Context) {
-        let dlls: Vec<String> = self.selected_dlls().map(str::to_owned).collect();
-        self.start_injection_of(ctx, dlls);
-    }
-
-    pub(crate) fn start_injection_of(&mut self, ctx: &Context, dlls: Vec<String>) {
-        let Some(pid) = self.selected_process else {
+    pub(crate) fn start_injection(&mut self, dlls: Vec<String>) {
+        let Some(pid) = self.selected_process.filter(|_| self.can_inject()) else {
             return;
         };
-        if dlls.is_empty() || self.is_injecting {
+        if dlls.is_empty() {
             return;
         }
-        self.is_injecting = true;
         let copy = self.config.copy_dll_on_inject;
         let randomize = self.config.randomize_dll_name;
-        let tx = self.background_tx.clone();
-        let ctx = ctx.clone();
-        std::thread::spawn(move || {
-            let message = inject_dlls(pid, &dlls, copy, randomize);
-            if tx.send(message).is_ok() {
-                ctx.request_repaint();
-            }
+        let (tx, rx) = mpsc::channel();
+        self.injection = Some(rx);
+        thread::spawn(move || {
+            let _ = tx.send(inject_dlls(pid, &dlls, copy, randomize));
+            Waker.wake();
         });
     }
 
-    fn finish_injection(&mut self, total: usize, failures: Vec<String>) {
-        self.is_injecting = false;
+    pub(crate) fn is_injecting(&self) -> bool {
+        self.injection.is_some()
+    }
+
+    pub(crate) fn can_inject(&self) -> bool {
+        !self.is_loading_processes
+            && !self.scan_failed
+            && !self.is_injecting()
+            && self.selected_process.is_some()
+    }
+
+    fn poll_injection(&mut self, ui: &mut Ui) {
+        let Some(rx) = &self.injection else { return };
+        match rx.try_recv() {
+            Ok(result) => self.finish_injection(result),
+            Err(TryRecvError::Disconnected) => {
+                self.add_toast(
+                    ToastLevel::Error,
+                    "The injection worker stopped unexpectedly.",
+                );
+            }
+            Err(TryRecvError::Empty) => {
+                ui.wake_after(WORKER_CHECK);
+                return;
+            }
+        }
+        self.injection = None;
+    }
+
+    fn finish_injection(&mut self, result: InjectionResult) {
+        let InjectionResult {
+            total,
+            failures,
+            cleanup_warnings,
+        } = result;
+        if !cleanup_warnings.is_empty() {
+            self.add_toast(ToastLevel::Warning, cleanup_warnings.join("; "));
+        }
         if failures.is_empty() {
             self.add_toast(ToastLevel::Success, format!("Injected {total} DLL(s)."));
             return;
@@ -148,121 +532,62 @@ impl InjectorApp {
     }
 }
 
-fn spawn_workers(
-    ctx: &Context,
-    background_tx: &Sender<BackgroundMessage>,
-    icon_rx: Receiver<(u32, std::path::PathBuf)>,
-) {
-    let process_tx = background_tx.clone();
-    let process_ctx = ctx.clone();
-    std::thread::spawn(move || process_scanner::scan_loop(process_tx, process_ctx));
-    let icon_tx = background_tx.clone();
-    let icon_ctx = ctx.clone();
-    std::thread::spawn(move || icon_loader::load_loop(icon_rx, icon_tx, icon_ctx));
-}
-
-fn handle_background_message(app: &mut InjectorApp, ctx: &Context, message: BackgroundMessage) {
-    match message {
-        BackgroundMessage::Processes(processes) => app.update_processes(processes),
-        BackgroundMessage::Icon(icon) => app.update_icon(ctx, icon),
-        BackgroundMessage::Injection(total, failures) => app.finish_injection(total, failures),
-        BackgroundMessage::Error(error) => app.add_toast(ToastLevel::Error, error),
-    }
-}
-
-fn request_missing_icons(
-    processes: &[ProcessInfo],
-    icon_cache: &HashMap<u32, TextureHandle>,
-    icon_tx: &Sender<(u32, std::path::PathBuf)>,
-) {
-    for process in processes {
-        let missing = !process.exe.as_os_str().is_empty() && !icon_cache.contains_key(&process.pid);
-        if missing && icon_tx.send((process.pid, process.exe.clone())).is_err() {
-            break;
+fn inject_dlls(pid: u32, dlls: &[String], copy: bool, randomize: bool) -> InjectionResult {
+    let mut failures = Vec::new();
+    let mut cleanup_warnings = Vec::new();
+    for path in dlls {
+        let (result, warning) = injector::inject_dll(pid, path, copy, randomize);
+        cleanup_warnings.extend(warning);
+        if let Err(error) = result {
+            let name = Path::new(path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+            failures.push(format!("{name}: {error}"));
         }
     }
-}
-
-fn inject_dlls(pid: u32, dlls: &[String], copy: bool, randomize: bool) -> BackgroundMessage {
-    let failures = dlls
-        .iter()
-        .filter_map(|path| {
-            injector::inject_dll(pid, path, copy, randomize)
-                .err()
-                .map(|error| {
-                    let name = Path::new(path)
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy();
-                    format!("{name}: {error}")
-                })
-        })
-        .collect();
-    BackgroundMessage::Injection(dlls.len(), failures)
-}
-
-fn load_default_dll_icon(ctx: &Context) -> TextureHandle {
-    let image = image::load_from_memory(include_bytes!("../assets/dll_icon.png"))
-        .expect("embedded DLL icon must be valid")
-        .resize_exact(16, 16, image::imageops::FilterType::Lanczos3)
-        .to_rgba8();
-    ctx.load_texture(
-        "dll_default",
-        ColorImage::from_rgba_unmultiplied([16, 16], image.as_raw()),
-        Default::default(),
-    )
-}
-
-impl eframe::App for InjectorApp {
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        while let Ok(message) = self.background_rx.try_recv() {
-            handle_background_message(self, ui.ctx(), message);
-        }
-        let changed = crate::ui::show(ui, self);
-        if let (true, Some(storage)) = (changed, frame.storage_mut()) {
-            self.persist_config(storage);
-        }
-    }
-
-    /// Persist on change via [`Self::ui`] and frequent autosave (window placement).
-    /// Do not rely on graceful shutdown — End Task never reaches close handlers.
-    fn save(&mut self, _storage: &mut dyn eframe::Storage) {}
-
-    fn auto_save_interval(&self) -> std::time::Duration {
-        // Frequent enough for End Task; not every frame (avoids saving mid-DPI restore).
-        std::time::Duration::from_millis(500)
-    }
-
-    fn persist_egui_memory(&self) -> bool {
-        false
+    InjectionResult {
+        total: dlls.len(),
+        failures,
+        cleanup_warnings,
     }
 }
 
-fn order_by_favorite(processes: &mut [ProcessInfo], config: &Config) {
-    if config.favorites.is_empty() {
-        return;
-    }
-    processes.sort_by_key(|process| !config.is_favorite(&process.name));
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use taut::testing::Trial;
 
-fn resolve_selection(
-    processes: &[ProcessInfo],
-    selected_pid: Option<u32>,
-    selected_name: Option<&str>,
-) -> Option<u32> {
-    selected_pid
-        .filter(|pid| {
-            processes.iter().any(|process| {
-                process.pid == *pid
-                    && selected_name.is_none_or(|name| process.name.eq_ignore_ascii_case(name))
-            })
-        })
-        .or_else(|| {
-            selected_name.and_then(|name| {
-                processes
-                    .iter()
-                    .find(|process| process.name.eq_ignore_ascii_case(name))
-                    .map(|process| process.pid)
-            })
-        })
+    #[test]
+    fn in_flight_icon_is_not_requeued_and_absent_result_is_discarded() {
+        let mut trial = Trial::new(InjectorApp::new(Config::default()), |_, _| {});
+        let (app, ui) = (&mut trial.app, &mut trial.ui);
+        let (requests, rx) = mpsc::channel();
+        let (tx, results) = mpsc::channel();
+        app.icon_worker = Some(icon_loader::Worker { requests, results });
+        let path = PathBuf::from("test.exe");
+        let rows = vec![ProcessInfo {
+            name: "test.exe".into(),
+            pid: 1,
+            exe: path.clone(),
+        }];
+        app.update_processes(ui, rows.clone());
+        assert!(app.request_icons());
+        let request = rx.try_recv().unwrap();
+
+        app.update_processes(ui, vec![]);
+        app.update_processes(ui, rows.clone());
+        assert!(app.request_icons());
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+
+        app.update_processes(ui, vec![]);
+        tx.send((request, Some((1, vec![0])))).unwrap();
+        app.poll_icons(ui);
+        assert!(!app.icon_cache.contains_key(&path));
+        app.update_processes(ui, rows);
+        assert!(app.request_icons());
+        tx.send((rx.try_recv().unwrap(), None)).unwrap();
+        app.poll_icons(ui);
+        assert!(!app.request_icons(), "a live path caches a negative result");
+    }
 }

@@ -1,55 +1,65 @@
-#![windows_subsystem = "console"]
+#![windows_subsystem = "windows"]
 #![feature(random)]
 
 mod app;
 mod cli;
 mod core;
 mod models;
+mod settings;
 mod ui;
 
 use crate::app::InjectorApp;
-use crate::models::{APP_NAME, DEFAULT_WINDOW_SIZE, MIN_WINDOW_SIZE};
-use eframe::{icon_data, NativeOptions};
-use std::sync::Arc;
-use windows::Win32::System::Console::{FreeConsole, GetConsoleWindow};
-use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+use crate::models::{Config, ToastLevel, APP_NAME, DEFAULT_WINDOW_SIZE, MIN_WINDOW_SIZE};
+use taut::{Window, WindowPlacement};
 
-fn main() -> eframe::Result<()> {
+fn main() {
     if let Some(code) = cli::run() {
         std::process::exit(code);
     }
-    detach_console();
-    run_gui()
-}
-
-fn detach_console() {
-    let hwnd = unsafe { GetConsoleWindow() };
-    if hwnd.is_invalid() {
-        return;
+    if taut::single_instance("fluffy-injector") {
+        run_gui();
     }
-    let hidden = unsafe { ShowWindow(hwnd, SW_HIDE) }.as_bool();
-    let detached = unsafe { FreeConsole() }.is_ok();
-    let _detached = hidden || detached;
 }
 
-fn run_gui() -> eframe::Result<()> {
-    let icon = icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
-        .expect("Failed to load window icon from assets/icon.png");
-    let viewport = eframe::egui::ViewportBuilder::default()
-        .with_inner_size(DEFAULT_WINDOW_SIZE)
-        .with_min_inner_size(MIN_WINDOW_SIZE)
-        .with_icon(Arc::new(icon));
-
-    let native_options = NativeOptions {
-        viewport,
-        persist_window: true,
-        centered: true,
-        ..Default::default()
+fn run_gui() {
+    let (config, warning, settings_writable) = match Config::load() {
+        Ok((config, warning)) => (config, warning, true),
+        Err(error) => (
+            Config::default(),
+            Some(format!(
+                "{error:#}. Settings will not be saved this session."
+            )),
+            false,
+        ),
     };
-
-    eframe::run_native(
-        APP_NAME,
-        native_options,
-        Box::new(|cc| Ok(Box::new(InjectorApp::new(cc)))),
-    )
+    let placement = config
+        .window
+        .filter(|place| {
+            [place.width, place.height]
+                .into_iter()
+                .all(|size| size.is_finite() && size > 0.0)
+        })
+        .map(|place| WindowPlacement {
+            position: place.position,
+            width: place.width.max(MIN_WINDOW_SIZE[0]),
+            height: place.height.max(MIN_WINDOW_SIZE[1]),
+            maximized: place.maximized,
+        });
+    // With no explicit icons, taut uses the multi-size icon embedded by build.rs.
+    let window = Window {
+        title: APP_NAME,
+        width: DEFAULT_WINDOW_SIZE[0],
+        height: DEFAULT_WINDOW_SIZE[1],
+        min_width: MIN_WINDOW_SIZE[0],
+        min_height: MIN_WINDOW_SIZE[1],
+        screen: Some(0),
+        ..Default::default()
+    }
+    .with_placement(placement);
+    let mut app = InjectorApp::new(config);
+    app.settings_writable = settings_writable;
+    if let Some(warning) = warning {
+        app.add_toast(ToastLevel::Error, warning);
+    }
+    taut::run(window, move |ui| app.describe(ui));
 }

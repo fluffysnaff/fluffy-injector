@@ -4,7 +4,7 @@
 fluffy_injector [options] <pid|process> <dll>...
 ```
 
-With no arguments, `fluffy_injector.exe` opens the desktop app and hides the console. A console window can appear briefly when you open it from Explorer. With any argument, it stays in the terminal and returns output and an exit code.
+With no arguments, `fluffy_injector.exe` opens the taut desktop app. It is a Windows GUI-subsystem executable and never creates a console window. With arguments, it runs the CLI, tries to attach to the calling terminal for output, and returns an exit code.
 
 The command works from a new terminal after an install that adds it to PATH. Otherwise, use the full path to `fluffy_injector.exe`.
 

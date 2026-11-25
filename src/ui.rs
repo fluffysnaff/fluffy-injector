@@ -1,541 +1,559 @@
 use crate::app::InjectorApp;
-use crate::models::{Dll, Toast, ToastLevel};
-use eframe::egui::{
-    self, Color32, CursorIcon, Frame, Id, Margin, Pos2, Rect, RichText, Sense, Stroke, TextEdit,
-    TextureHandle, UiBuilder, Vec2, Visuals,
-};
+use crate::models::{Dll, Notice, ProcessInfo, ToastLevel, DEFAULT_SPLIT_RATIO};
+use std::borrow::Cow;
 use std::path::Path;
+use std::time::Instant;
+use taut::{Align, Color, Icon, Key, Length, Mods, Picture, Role, Theme, Ui};
 use windows::core::{w, PCWSTR};
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-const SURFACE: Color32 = Color32::from_rgb(28, 28, 28);
-const RAISED: Color32 = Color32::from_rgb(36, 36, 36);
-const RULE: Color32 = Color32::from_rgb(58, 58, 58);
-const BG: Color32 = Color32::from_rgb(16, 16, 16);
+const SURFACE: Color = Color::rgb(0x1c1c1c);
+const RAISED: Color = Color::rgb(0x242424);
+const RULE: Color = Color::rgb(0x3a3a3a);
+const BG: Color = Color::rgb(0x101010);
+const HOVER_ROW: Color = Color::rgb(0x252525);
 const PANEL_MIN: f32 = 140.0;
+const PANEL_PAD: f32 = 12.0;
+const SPLITTER_WIDTH: f32 = 5.0;
+const ICON_SIZE: f32 = 16.0;
+const ROW_PAD: f32 = 4.0;
+const DLL_ICON_GAP: f32 = 6.0;
+const CHECKBOX_WIDTH: f32 = 24.0; // 16 px mark and 8 px gap in taut's checkbox.
+const FAVORITE: Icon =
+    Icon::solid("M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z");
 
-pub(crate) fn show(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
-    if !ui.ctx().input(|i| i.focused) {
-        egui::Popup::close_all(ui.ctx());
+pub(crate) fn theme() -> Theme {
+    Theme {
+        bg: SURFACE,
+        panel: BG,
+        raised: RAISED,
+        hover: RULE,
+        line: RULE,
+        line_strong: RULE,
+        selected: Color::rgb(0x325a96),
+        accent: Color::rgb(0x8cbeff),
+        text_dim: Color::rgb(0xa0a0a0),
+        radius: 4.0,
+        ..Theme::dark()
     }
-    ui.painter().rect_filled(ui.max_rect(), 0.0, SURFACE);
+}
+
+pub(crate) fn show(ui: &mut Ui, app: &mut InjectorApp) -> bool {
+    ui.column().grow().open();
     status_bar(ui, app);
     let changed = split_body(ui, app);
-    toasts(ui.ctx(), app);
+    ui.close();
     changed
 }
 
-pub(crate) fn apply_theme(ctx: &egui::Context) {
-    let mut v = Visuals::dark();
-    v.window_fill = SURFACE;
-    v.panel_fill = SURFACE;
-    v.extreme_bg_color = BG;
-    v.text_edit_bg_color.replace(BG);
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, RULE);
-    v.widgets.inactive.bg_fill = Color32::from_rgb(45, 45, 45);
-    v.widgets.hovered.bg_fill = RULE;
-    v.widgets.hovered.fg_stroke = Stroke::new(1.0, Color32::from_gray(140));
-    v.widgets.active.bg_fill = Color32::from_rgb(68, 68, 68);
-    v.widgets.active.fg_stroke = Stroke::new(1.0, Color32::from_gray(180));
-    v.selection.bg_fill = Color32::from_rgb(50, 90, 150);
-    ctx.set_visuals(v);
-    ctx.all_styles_mut(|s| {
-        let mut scroll = egui::style::ScrollStyle::solid();
-        scroll.bar_width = 10.0;
-        s.spacing.scroll = scroll;
-    });
-}
-
-fn scroll<R>(ui: &mut egui::Ui, id: &'static str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    let size = ui.available_size();
-    egui::ScrollArea::vertical()
-        .id_salt(id)
-        .auto_shrink([false, false])
-        .max_width(size.x)
-        .max_height(size.y)
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            add(ui)
-        })
-        .inner
-}
-
-fn split_body(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
-    let full = ui.available_rect_before_wrap();
-    ui.allocate_rect(full, Sense::hover());
-    let max = (full.width() - PANEL_MIN).max(PANEL_MIN);
-    let left_w = (full.width() * app.config.split_ratio).clamp(PANEL_MIN, max);
-    let left = Rect::from_min_size(full.min, Vec2::new(left_w, full.height()));
-    let right = Rect::from_min_max(Pos2::new(full.min.x + left_w, full.min.y), full.max);
-    let mut changed = pane(ui, left, |ui| process_panel(ui, app));
-    changed |= pane(ui, right, |ui| dll_panel(ui, app));
-    ui.painter()
-        .vline(left.max.x, full.y_range(), Stroke::new(1.0, RULE));
-    changed | split_drag(ui, app, full, left_w)
-}
-
-fn pane(ui: &mut egui::Ui, rect: Rect, add: impl FnOnce(&mut egui::Ui) -> bool) -> bool {
-    ui.scope_builder(
-        UiBuilder::new()
-            .max_rect(rect.shrink(12.0))
-            .layout(egui::Layout::top_down_justified(egui::Align::Min)),
-        |ui| {
-            ui.set_clip_rect(rect);
-            ui.set_min_size(ui.available_size());
-            add(ui)
-        },
-    )
-    .inner
-}
-
-fn split_drag(ui: &mut egui::Ui, app: &mut InjectorApp, full: Rect, left_w: f32) -> bool {
-    let handle = Rect::from_center_size(
-        Pos2::new(full.min.x + left_w, full.center().y),
-        Vec2::new(8.0, full.height()),
-    );
-    let r = ui.interact(handle, Id::new("split_handle"), Sense::drag());
-    if r.hovered() || r.dragged() {
-        ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
-    }
-    let Some(pos) = r.dragged().then(|| r.interact_pointer_pos()).flatten() else {
-        return false;
-    };
-    let max = (full.width() - PANEL_MIN).max(PANEL_MIN);
-    app.config.split_ratio = (pos.x - full.min.x).clamp(PANEL_MIN, max) / full.width().max(1.0);
-    true
-}
-
-fn status_bar(ui: &mut egui::Ui, app: &InjectorApp) {
-    egui::Panel::top("status_bar")
-        .exact_size(44.0)
-        .show_separator_line(false)
-        .frame(
-            Frame::NONE
-                .fill(RAISED)
-                .stroke(Stroke::new(1.0, RULE))
-                .inner_margin(Margin::symmetric(14, 0)),
-        )
-        .show(ui, |ui| status_contents(ui, app));
-}
-
-fn status_contents(ui: &mut egui::Ui, app: &InjectorApp) {
-    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-        ui.label(RichText::new(process_status(app)).size(14.0).strong());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let n = app.selected_dlls().count();
-            ui.label(
-                RichText::new(format!("DLLs selected: {n}"))
-                    .size(14.0)
-                    .color(Color32::from_rgb(140, 190, 255)),
-            );
-        });
-    });
-}
-
-fn process_status(app: &InjectorApp) -> String {
-    match app.selected_process_info() {
-        Some(p) => format!("{}  ·  PID {}", p.name, p.pid),
+fn status_bar(ui: &mut Ui, app: &InjectorApp) {
+    let t = ui.theme;
+    let process = match app.selected_process_info() {
+        Some(process) => format!("{}  ·  PID {}", process.name, process.pid),
+        None if app.multiple_matches() => "Multiple matches, select a PID".into(),
         None => app.config.last_selected_app.as_ref().map_or_else(
             || "No process selected".into(),
-            |n| format!("Waiting for {n}"),
+            |name| format!("Waiting for {name}"),
         ),
-    }
-}
-
-fn toasts(ctx: &egui::Context, app: &mut InjectorApp) {
-    app.toasts.retain(Toast::is_alive);
-    if app.toasts.is_empty() {
-        return;
-    }
-    let rect = ctx.content_rect();
-    egui::Area::new("toasts".into())
-        .fixed_pos(Pos2::new(rect.center().x - 110.0, rect.top() + 12.0))
-        .order(egui::Order::Foreground)
-        .interactable(false)
-        .show(ctx, |ui| {
-            ui.set_width(220.0);
-            for t in &app.toasts {
-                toast(ui, t);
-                ui.add_space(6.0);
-            }
-        });
-}
-
-fn toast(ui: &mut egui::Ui, t: &Toast) {
-    let (prefix, color) = match t.level {
-        ToastLevel::Info => ("Info", Color32::from_gray(200)),
-        ToastLevel::Success => ("OK", Color32::from_rgb(120, 220, 140)),
-        ToastLevel::Warning => ("Warn", Color32::from_rgb(240, 200, 80)),
-        ToastLevel::Error => ("Error", Color32::from_rgb(240, 100, 100)),
     };
-    Frame::popup(ui.style())
-        .inner_margin(Margin::symmetric(10, 8))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.label(RichText::new(format!("{prefix}: {}", t.message)).color(color));
-        });
+    ui.row()
+        .w(Length::Grow(1.0))
+        .pad((14.0, t.gap * 1.5))
+        .gap(t.gap)
+        .align(Align::Start, Align::Center)
+        .fill(t.raised)
+        .border(t.line, 1.0)
+        .open();
+    ui.el()
+        .w(Length::Grow(1.0))
+        .text(&process, t.font, t.text)
+        .clip()
+        .show();
+    ui.text(
+        &format!("DLLs selected: {}", app.selected_dlls().count()),
+        t.font,
+        t.accent,
+    );
+    ui.close();
 }
 
-fn process_panel(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
-    ui.label(RichText::new("Processes").size(15.0).strong());
-    ui.add_space(8.0);
-    if ui
-        .add(
-            TextEdit::singleline(&mut app.process_search)
-                .hint_text("Filter by name…")
-                .desired_width(f32::INFINITY)
-                .background_color(BG),
-        )
-        .changed()
+fn split_body(ui: &mut Ui, app: &mut InjectorApp) -> bool {
+    let size = ui.size();
+    let ratio = if app.config.split_ratio.is_finite() {
+        app.config.split_ratio
+    } else {
+        DEFAULT_SPLIT_RATIO
+    };
+    let max = (size.w - SPLITTER_WIDTH - PANEL_MIN).max(PANEL_MIN);
+    let mut left = (size.w * ratio).clamp(PANEL_MIN, max);
+    ui.row().grow().open();
+    ui.column()
+        .w(Length::Px(left))
+        .h(Length::Grow(1.0))
+        .pad(PANEL_PAD)
+        .gap(8.0)
+        .clip()
+        .open();
+    let mut changed = process_panel(ui, app);
+    ui.close();
+    if ui.splitter(&mut left, PANEL_MIN, max).changed {
+        app.config.split_ratio = left / size.w.max(1.0);
+        changed = true;
+    }
+    ui.column().grow().pad(PANEL_PAD).gap(8.0).clip().open();
+    changed |= dll_panel(ui, app);
+    ui.close();
+    ui.close();
+    changed
+}
+
+fn process_panel(ui: &mut Ui, app: &mut InjectorApp) -> bool {
+    heading(ui, "Processes");
+    if app.scan_failed {
+        ui.note("Process scan failed. Showing last results.");
+    }
+    let search = ui.text_box(&mut app.process_search, "Filter by name…");
+    let mut search_changed = search.changed;
+    if ui.popup_anchor().is_none() {
+        if ui.keys("Ctrl+F") {
+            ui.set_focus(search.id);
+            ui.select_all();
+        } else if search.focused {
+            if ui.key(Key::Enter, Mods::NONE) {
+                ui.set_focus(0);
+            } else if ui.key(Key::Escape, Mods::NONE) {
+                if app.process_search.is_empty() {
+                    ui.set_focus(0);
+                } else {
+                    app.process_search.clear();
+                    search_changed = true;
+                }
+            }
+        }
+    }
+    if search_changed {
+        app.rebuild_process_rows();
+        if !app.process_rows.is_empty() {
+            let row = if app.process_search.is_empty() {
+                app.selected_row()
+            } else {
+                None
+            };
+            ui.scroll_to_row(row.unwrap_or(0));
+        }
+    }
+    if !app.process_search.is_empty()
+        && app.selected_process.is_some()
+        && app.selected_row().is_none()
     {
-        app.sync_process_search_lower();
+        ui.note("Selected process is hidden by filter");
+        if ui.button("Clear filter").clicked {
+            app.process_search.clear();
+            app.rebuild_process_rows();
+            if let Some(row) = app.selected_row() {
+                ui.scroll_to_row(row);
+            }
+            ui.rerun();
+        }
     }
-    ui.add_space(10.0);
-    scroll(ui, "process_list", |ui| process_list(ui, app))
-}
-
-fn process_list(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
+    let list = ui.column().grow().scroll().sense().open();
+    let mut action = None;
     if app.is_loading_processes && app.processes.is_empty() {
-        ui.vertical_centered(|ui| {
-            ui.add_space(24.0);
-            ui.add(egui::Spinner::new());
-        });
-        let action = space_menu(ui, |ui| blocked_menu(ui, app));
-        return apply(app, ui.ctx(), action);
+        ui.row()
+            .w(Length::Grow(1.0))
+            .pad((0.0, 24.0))
+            .align(Align::Center, Align::Center)
+            .open();
+        ui.spinner();
+        ui.close();
+    } else if app.process_rows.is_empty() {
+        ui.note("No matching processes.");
+    } else {
+        for row in ui.rows(app.process_rows.len(), ui.theme.control_height) {
+            let (index, favorite) = app.process_rows[row];
+            let process = &app.processes[index];
+            let selected = app.selected_process == Some(process.pid);
+            let picture = app.process_icon(&process.exe);
+            action = process_row(ui, index, process, selected, favorite, picture).or(action);
+        }
+        ui.close();
     }
-    let (mut sel, mut menu) = (None, None);
-    process_rows(ui, app, &mut sel, &mut menu);
-    let empty = space_menu(ui, |ui| blocked_menu(ui, app));
-    apply(app, ui.ctx(), menu.or(sel)) | apply(app, ui.ctx(), empty)
-}
-
-fn process_rows(
-    ui: &mut egui::Ui,
-    app: &InjectorApp,
-    sel: &mut Option<Action>,
-    menu: &mut Option<Action>,
-) {
-    let search = app.process_search_lower.as_str();
-    for p in &app.processes {
-        if app.config.is_blocked(&p.name) || !matches_search(&p.name, search) {
-            continue;
+    ui.close();
+    if ui.context_menu(&list) {
+        if app.config.blocked.is_empty() {
+            ui.set_enabled(false);
+            ui.menu_item("Blocked (empty)");
+            ui.set_enabled(true);
+        } else if ui.submenu("Blocked") {
+            for (index, name) in app.config.blocked.iter().enumerate() {
+                if ui.menu_item(&name.replace('&', "&&")).clicked {
+                    action = Some(ProcessAction::Unblock(index));
+                }
+            }
+            ui.close();
         }
-        let fav = app.config.is_favorite(&p.name);
-        let r = process_row(ui, p, app.selected_process == Some(p.pid), fav, app);
-        if r.clicked() {
-            *sel = Some(Action::Select(p.pid));
-        }
-        process_menu(&r, p.pid, fav, menu);
+        ui.close();
     }
-}
-
-fn process_menu(r: &egui::Response, pid: u32, fav: bool, menu: &mut Option<Action>) {
-    menu_on(r, |ui| {
-        if item(ui, true, if fav { "Unfavorite" } else { "Favorite" }) {
-            *menu = Some(Action::Fav(pid));
-        }
-        if item(ui, true, "Block from list") {
-            *menu = Some(Action::Block(pid));
-        }
-    });
-}
-
-fn matches_search(name: &str, q: &str) -> bool {
-    q.is_empty()
-        || name
-            .as_bytes()
-            .windows(q.len())
-            .any(|w| w.eq_ignore_ascii_case(q.as_bytes()))
-}
-
-fn blocked_menu(ui: &mut egui::Ui, app: &InjectorApp) -> Option<Action> {
-    if app.config.blocked.is_empty() {
-        ui.add_enabled(false, egui::Button::new("Blocked (empty)"));
-        return None;
+    let changed = action.is_some_and(|action| apply_process_action(app, action));
+    if changed {
+        ui.rerun();
     }
-    let mut unblock = None;
-    ui.menu_button("Blocked", |ui| {
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-        egui::ScrollArea::vertical()
-            .max_height(220.0)
-            .show(ui, |ui| {
-                blocked_entries(ui, &app.config.blocked, &mut unblock)
-            });
-    });
-    unblock
-}
-
-fn blocked_entries(ui: &mut egui::Ui, blocked: &[String], out: &mut Option<Action>) {
-    for (i, name) in blocked.iter().enumerate() {
-        if item(ui, true, name) {
-            *out = Some(Action::Unblock(i));
-        }
-    }
+    changed
 }
 
 fn process_row(
-    ui: &mut egui::Ui,
-    p: &crate::models::ProcessInfo,
+    ui: &mut Ui,
+    index: usize,
+    process: &ProcessInfo,
     selected: bool,
-    fav: bool,
-    app: &InjectorApp,
-) -> egui::Response {
-    let (rect, r) = row(ui);
-    row_bg(ui, rect, selected, r.hovered() || r.context_menu_opened());
-    in_row(ui, rect, |ui| {
-        icon(ui, app.icon_cache.get(&p.pid));
-        ui.add_space(6.0);
-        if fav {
-            ui.label(RichText::new("★").strong());
-            ui.add_space(4.0);
+    favorite: bool,
+    picture: Option<Picture>,
+) -> Option<ProcessAction> {
+    let t = ui.theme;
+    let key = process.pid;
+    let response = ui.press(ui.id(key));
+    let mut action = response.clicked.then_some(ProcessAction::Select(index));
+    ui.row().key(key).grow().sense().focusable().open();
+    let menu_open = ui.context_menu(&response);
+    if menu_open {
+        let label = if favorite { "Unfavorite" } else { "Favorite" };
+        if ui.menu_item(label).clicked {
+            action = Some(ProcessAction::Favorite(index));
         }
-        ui.add(
-            egui::Label::new(&p.name)
-                .truncate()
-                .selectable(false)
-                .sense(Sense::hover()),
-        );
-        ui.add_space(4.0);
-        ui.label(RichText::new(format!("({})", p.pid)).color(Color32::from_gray(160)));
-    });
-    r
-}
-
-fn dll_panel(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
-    let mut changed = false;
-    egui::Panel::bottom("dll_footer")
-        .resizable(false)
-        .show_separator_line(false)
-        .frame(Frame::NONE.fill(SURFACE).inner_margin(Margin {
-            left: 0,
-            right: 0,
-            top: 10,
-            bottom: 4,
-        }))
-        .show(ui, |ui| changed |= dll_footer(ui, app));
-    ui.label(RichText::new("DLLs").size(15.0).strong());
-    ui.add_space(8.0);
-    changed | scroll(ui, "dll_list", |ui| dll_list(ui, app))
-}
-
-fn dll_footer(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
-    let y = ui.cursor().min.y + 0.5;
-    ui.painter()
-        .hline(ui.max_rect().x_range(), y, Stroke::new(1.0, RULE));
-    ui.add_space(11.0);
-    dll_settings(ui, app) | {
-        ui.add_space(10.0);
-        dll_actions(ui, app)
+        if ui.menu_item("Block from list").clicked {
+            action = Some(ProcessAction::Block(index));
+        }
+        ui.close();
     }
-}
 
-fn dll_settings(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
-    ui.horizontal(|ui| {
-        let a = ui
-            .checkbox(&mut app.config.copy_dll_on_inject, "Copy on inject")
-            .on_hover_text("Keeps the original DLL free for rebuilding.")
-            .changed();
-        ui.add_space(16.0);
-        a || ui
-            .add_enabled(
-                app.config.copy_dll_on_inject,
-                egui::Checkbox::new(&mut app.config.randomize_dll_name, "Random name"),
-            )
-            .on_hover_text("Gives the copied DLL a random name.")
-            .changed()
-    })
-    .inner
-}
-
-fn dll_actions(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
-    let n = app.selected_dlls().count();
-    let can = app.selected_process.is_some() && n > 0 && !app.is_injecting;
-    let gap = ui.spacing().item_spacing.x;
-    let size = Vec2::new(
-        ((ui.available_width() - gap * 2.0) / 3.0)
-            .floor()
-            .clamp(49.0, 250.0),
-        24.0,
+    ui.row()
+        .grow()
+        .pad((ROW_PAD, 0.0))
+        .gap(5.0)
+        .align(Align::Start, Align::Center)
+        .fill(if selected {
+            t.selected
+        } else if response.hovered || menu_open {
+            HOVER_ROW
+        } else {
+            Color::NONE
+        })
+        .radius(t.radius)
+        .open();
+    icon(ui, picture);
+    if favorite {
+        ui.el().icon(FAVORITE, 12.0, t.text).show();
+    }
+    let pid = format!("({key})");
+    let name = ui
+        .el()
+        .text(&process.name, t.font, t.text)
+        .shrink(1)
+        .clip()
+        .show();
+    if name.rect.w < ui.text_width(&process.name, t.font) {
+        ui.tooltip(&response, &process.name);
+    }
+    ui.text(&pid, t.font, t.text_dim);
+    ui.close();
+    ui.close();
+    ui.tell(
+        &response,
+        Role::ListItem,
+        Some(selected),
+        &format!("{} {pid}", process.name),
     );
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        if btn(ui, true, "Add DLL", size) {
-            changed |= apply(app, ui.ctx(), Some(Action::AddDll));
-        }
-        if btn(
-            ui,
-            can,
-            if app.is_injecting {
-                "Injecting…"
-            } else {
-                "Inject"
-            },
-            size,
-        ) {
-            app.start_injection(ui.ctx());
-        }
-        if btn(ui, n > 0, "Remove", size) {
-            let before = app.config.dlls.len();
-            app.config.dlls.retain(|d| !d.selected);
-            app.add_toast(
-                ToastLevel::Info,
-                format!("Removed {} DLL(s).", before - app.config.dlls.len()),
-            );
-            changed = true;
-        }
-    });
-    changed
+    action
 }
 
-fn dll_list(ui: &mut egui::Ui, app: &mut InjectorApp) -> bool {
-    let mut menu = None;
-    let mut changed = false;
-    if app.config.dlls.is_empty() {
-        ui.colored_label(Color32::DARK_GRAY, "No DLLs added yet.");
-    } else {
-        let tex = app.default_dll_texture.id();
-        let can = app.selected_process.is_some() && !app.is_injecting;
-        for (i, dll) in app.config.dlls.iter_mut().enumerate() {
-            changed |= dll_row(ui, dll, tex, i, can, &mut menu);
+enum ProcessAction {
+    Select(usize),
+    Favorite(usize),
+    Block(usize),
+    Unblock(usize),
+}
+
+fn apply_process_action(app: &mut InjectorApp, action: ProcessAction) -> bool {
+    match action {
+        ProcessAction::Select(index) => {
+            let process = &app.processes[index];
+            if app.selected_process == Some(process.pid) {
+                return false;
+            }
+            app.selected_process = Some(process.pid);
+            app.config.last_selected_app = Some(process.name.clone());
+            return true;
+        }
+        ProcessAction::Favorite(index) => app.config.toggle_favorite(&app.processes[index].name),
+        ProcessAction::Block(index) => {
+            app.config.block_process(&app.processes[index].name);
+            app.resolve_selection();
+        }
+        ProcessAction::Unblock(index) => {
+            app.config.unblock_at(index);
+            app.resolve_selection();
         }
     }
-    let add = space_menu(ui, |ui| item(ui, true, "Add DLL").then_some(Action::AddDll));
-    apply(app, ui.ctx(), menu) | changed | apply(app, ui.ctx(), add)
+    app.rebuild_process_rows();
+    true
+}
+
+fn dll_panel(ui: &mut Ui, app: &mut InjectorApp) -> bool {
+    heading(ui, "DLLs");
+    let over = ui.files_hovered()
+        && ui
+            .pointer()
+            .is_some_and(|at| ui.interact(ui.next_id()).rect.contains(at));
+    let fill = if over { ui.theme.raised } else { Color::NONE };
+    let list = ui.column().grow().scroll().fill(fill).sense().open();
+    let mut changed = false;
+    let mut action = None;
+    let mut open_menu = None;
+    if app.config.dlls.is_empty() {
+        ui.note("No DLLs added yet.");
+    } else {
+        let can_inject = app.can_inject();
+        let picture = app.dll_icon();
+        let label_width =
+            ui.available_size().w - 2.0 * ROW_PAD - ICON_SIZE - DLL_ICON_GAP - CHECKBOX_WIDTH;
+        for index in ui.rows(app.config.dlls.len(), ui.theme.control_height) {
+            let (toggled, menu, menu_open) = dll_row(
+                ui,
+                &mut app.config.dlls[index],
+                picture,
+                index,
+                can_inject,
+                label_width,
+                app.dll_menu == Some(index),
+            );
+            changed |= toggled;
+            action = menu.or(action);
+            if menu_open {
+                open_menu = Some(index);
+            }
+        }
+        ui.close();
+    }
+    ui.close();
+    if app.dll_menu != open_menu {
+        app.dll_menu = open_menu;
+        ui.rerun();
+    }
+    if let Some(paths) = ui.files_dropped(&list) {
+        for path in paths {
+            changed |= app.add_dll(path);
+        }
+    }
+    if ui.context_menu(&list) {
+        if ui.menu_item("Add DLL").clicked {
+            action = Some(DllAction::Add);
+        }
+        ui.close();
+    }
+    if let Some(action) = action {
+        changed |= apply_dll_action(app, action);
+    }
+    changed | dll_footer(ui, app)
 }
 
 fn dll_row(
-    ui: &mut egui::Ui,
+    ui: &mut Ui,
     dll: &mut Dll,
-    tex: egui::TextureId,
-    i: usize,
-    can: bool,
-    menu: &mut Option<Action>,
-) -> bool {
-    let (rect, r) = row(ui);
-    let mut changed = false;
-    let check = in_row(ui, rect, |ui| {
-        ui.add(egui::Image::new((tex, Vec2::splat(16.0))).sense(Sense::hover()));
-        ui.add_space(6.0);
-        let name = Path::new(&dll.path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(&dll.path);
-        let c = ui.checkbox(&mut dll.selected, name);
-        changed = c.changed();
-        c
-    });
-    let r = r.union(check);
-    row_bg(ui, rect, false, r.hovered() || r.context_menu_opened());
-    dll_menu(&r, &dll.path, i, can, menu);
-    changed
+    picture: Option<Picture>,
+    index: usize,
+    can_inject: bool,
+    label_width: f32,
+    was_open: bool,
+) -> (bool, Option<DllAction>, bool) {
+    let radius = ui.theme.radius;
+    let mut row = ui.row().key(&dll.path).grow().sense().clip().open();
+    ui.row()
+        .grow()
+        .pad((ROW_PAD, 0.0))
+        .gap(DLL_ICON_GAP)
+        .align(Align::Start, Align::Center)
+        .fill(if row.hovered || row.contains_pointer || was_open {
+            HOVER_ROW
+        } else {
+            Color::NONE
+        })
+        .radius(radius)
+        .open();
+    icon(ui, picture);
+    let name = Path::new(&dll.path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(&dll.path);
+    let label = truncate(ui, name, label_width);
+    let check = ui.checkbox(&mut dll.selected, &label);
+    ui.tooltip(&check, &dll.path);
+    ui.close();
+    ui.close();
+
+    // Inside the row the checkbox owns pointer and keyboard input.
+    row.right_clicked |= check.right_clicked;
+    row.focused |= check.focused;
+    let mut action = None;
+    let menu_open = ui.context_menu(&row);
+    if menu_open {
+        if ui.menu_item("Open file location").clicked {
+            action = Some(DllAction::Open(index));
+        }
+        ui.set_enabled(can_inject);
+        if ui.menu_item("Inject").clicked {
+            action = Some(DllAction::Inject(index));
+        }
+        ui.set_enabled(true);
+        if ui.menu_item("Delete").clicked {
+            action = Some(DllAction::Delete(index));
+        }
+        ui.close();
+    }
+    (check.changed, action, menu_open)
 }
 
-fn dll_menu(r: &egui::Response, path: &str, i: usize, can: bool, menu: &mut Option<Action>) {
-    menu_on(r, |ui| {
-        if item(ui, true, "Open file location") {
-            *menu = Some(Action::Open(path.into()));
-        }
-        if item(ui, can, "Inject") {
-            *menu = Some(Action::Inject(path.into()));
-        }
-        if item(ui, true, "Delete") {
-            *menu = Some(Action::Delete(i));
-        }
-    });
+fn truncate<'a>(ui: &mut Ui, text: &'a str, width: f32) -> Cow<'a, str> {
+    let font = ui.theme.font;
+    if ui.text_width(text, font).ceil() <= width {
+        return Cow::Borrowed(text);
+    }
+    let width = width - ui.text_width("…", font).ceil();
+    let ends: Vec<_> = text.char_indices().map(|(index, _)| index).collect();
+    let fit = ends.partition_point(|&end| ui.text_width(&text[..end], font).ceil() <= width);
+    let end = ends.get(fit.saturating_sub(1)).copied().unwrap_or(0);
+    Cow::Owned(format!("{}…", &text[..end]))
 }
 
-enum Action {
-    Select(u32),
-    Fav(u32),
-    Block(u32),
-    Unblock(usize),
-    AddDll,
-    Open(String),
-    Inject(String),
+enum DllAction {
+    Add,
+    Open(usize),
+    Inject(usize),
     Delete(usize),
 }
 
-fn apply(app: &mut InjectorApp, ctx: &egui::Context, action: Option<Action>) -> bool {
+fn apply_dll_action(app: &mut InjectorApp, action: DllAction) -> bool {
     match action {
-        Some(Action::Select(pid)) => select_process(app, pid),
-        Some(Action::Fav(pid)) => with_name(app, pid, |app, name| {
-            app.config.toggle_favorite(name);
-            app.order_processes_by_favorite();
-        }),
-        Some(Action::Block(pid)) => with_name(app, pid, |app, name| {
-            if app.selected_process == Some(pid) {
-                app.selected_process = None;
+        DllAction::Add => app.pick_dll(),
+        DllAction::Open(index) => {
+            if let Err(error) = open_location(&app.config.dlls[index].path) {
+                app.add_toast(ToastLevel::Error, error);
             }
-            app.config.block_process(name);
-        }),
-        Some(Action::Unblock(i)) => {
-            app.config.unblock_at(i);
-            true
         }
-        Some(Action::AddDll) => add_dll(app),
-        Some(Action::Open(path)) => {
-            if let Err(e) = open_location(&path) {
-                app.add_toast(ToastLevel::Error, e);
-            }
-            false
+        DllAction::Inject(index) => {
+            app.start_injection(vec![app.config.dlls[index].path.clone()]);
         }
-        Some(Action::Inject(path)) => {
-            app.start_injection_of(ctx, vec![path]);
-            false
-        }
-        Some(Action::Delete(i)) if i < app.config.dlls.len() => {
-            app.config.dlls.remove(i);
+        DllAction::Delete(index) => {
+            app.config.dlls.remove(index);
             app.add_toast(ToastLevel::Info, "Removed 1 DLL.");
-            true
+            return true;
         }
-        _ => false,
+    }
+    false
+}
+
+fn dll_footer(ui: &mut Ui, app: &mut InjectorApp) -> bool {
+    ui.separator();
+    ui.wrapping_row().gap(6.0).open();
+    let copy = ui.checkbox(&mut app.config.copy_dll_on_inject, "Copy on inject");
+    ui.tooltip(&copy, "Keeps the original DLL free for rebuilding.");
+    ui.set_enabled(app.config.copy_dll_on_inject);
+    let random = ui.checkbox(&mut app.config.randomize_dll_name, "Random name");
+    ui.set_enabled(true);
+    ui.tooltip(&random, "Gives the copied DLL a random name.");
+    ui.close();
+
+    let count = app.selected_dlls().count();
+    let can_inject = count > 0 && app.can_inject();
+    let inject_label = if app.is_injecting() {
+        "Injecting…"
+    } else {
+        "Inject"
+    };
+    let gap = 6.0;
+    let needed = 3.0 * (ui.text_width("Injecting…", ui.theme.font).ceil() + 24.0) + 2.0 * gap;
+    let across = ui.available_size().w >= needed;
+    let actions = if across { ui.row() } else { ui.column() };
+    actions
+        .w(Length::Grow(1.0))
+        .gap(gap)
+        .align(Align::Start, Align::Spread)
+        .open();
+    let add = footer_button(ui, across, "Add DLL", true);
+    let inject = footer_button(ui, across, inject_label, can_inject);
+    let remove = footer_button(ui, across, "Remove", count > 0);
+    ui.close();
+    if add {
+        app.pick_dll();
+    }
+    if inject {
+        app.start_injection(app.selected_dlls().map(str::to_owned).collect());
+    }
+    if remove {
+        app.config.dlls.retain(|dll| !dll.selected);
+        app.add_toast(ToastLevel::Info, format!("Removed {count} DLL(s)."));
+    }
+    copy.changed || random.changed || remove
+}
+
+fn footer_button(ui: &mut Ui, across: bool, label: &str, enabled: bool) -> bool {
+    let button = ui.column().align(Align::Start, Align::Spread);
+    if across {
+        button.w(Length::Grow(1.0)).open();
+    } else {
+        button.open();
+    }
+    ui.set_enabled(enabled);
+    let clicked = ui.button(label).clicked;
+    ui.set_enabled(true);
+    ui.close();
+    clicked
+}
+
+fn heading(ui: &mut Ui, label: &str) {
+    ui.text(label, ui.theme.font.bold(), ui.theme.text);
+}
+
+fn icon(ui: &mut Ui, picture: Option<Picture>) {
+    if let Some(picture) = picture {
+        ui.el().size(ICON_SIZE, ICON_SIZE).picture(picture).show();
+    } else {
+        let color = ui.theme.text_faint;
+        ui.row()
+            .size(ICON_SIZE, ICON_SIZE)
+            .align(Align::Center, Align::Center)
+            .open();
+        ui.el().size(4.0, 4.0).radius(2.0).fill(color).show();
+        ui.close();
     }
 }
 
-fn select_process(app: &mut InjectorApp, pid: u32) -> bool {
-    if app.selected_process == Some(pid) {
-        return false;
+pub(crate) fn show_notices(ui: &mut Ui, notices: &[Notice], now: Instant) {
+    let Some(expires) = notices.iter().map(|notice| notice.expires).min() else {
+        return;
+    };
+    ui.wake_after(expires.saturating_duration_since(now));
+    let t = ui.theme;
+    ui.notices(Align::End, Align::End);
+    for notice in notices {
+        let (prefix, color) = match notice.level {
+            ToastLevel::Info => ("Info", Color::rgb(0xc8c8c8)),
+            ToastLevel::Success => ("OK", Color::rgb(0x78dc8c)),
+            ToastLevel::Warning => ("Warn", Color::rgb(0xf0c850)),
+            ToastLevel::Error => ("Error", Color::rgb(0xf06464)),
+        };
+        ui.el()
+            .key(notice.id)
+            .w(Length::Px(220.0))
+            .pad((10.0, 8.0))
+            .fill(t.raised)
+            .border(t.line, 1.0)
+            .radius(t.radius)
+            .text(&format!("{prefix}: {}", notice.message), t.font, color)
+            .wrap()
+            .show();
     }
-    let Some(name) = app
-        .processes
-        .iter()
-        .find(|p| p.pid == pid)
-        .map(|p| p.name.clone())
-    else {
-        return false;
-    };
-    app.selected_process = Some(pid);
-    app.config.last_selected_app = Some(name);
-    true
-}
-
-fn with_name(app: &mut InjectorApp, pid: u32, f: impl FnOnce(&mut InjectorApp, &str)) -> bool {
-    let Some(name) = app
-        .processes
-        .iter()
-        .find(|p| p.pid == pid)
-        .map(|p| p.name.clone())
-    else {
-        return false;
-    };
-    f(app, &name);
-    true
-}
-
-fn add_dll(app: &mut InjectorApp) -> bool {
-    let Some(path) = crate::core::dll_selector::select_dll() else {
-        return false;
-    };
-    if app.config.dlls.iter().any(|d| d.path == path) {
-        app.add_toast(ToastLevel::Warning, "DLL is already in the list.");
-        return false;
-    }
-    app.config.dlls.push(Dll {
-        path,
-        selected: false,
-    });
-    true
+    ui.close();
 }
 
 fn open_location(path: &str) -> Result<(), String> {
@@ -562,77 +580,187 @@ fn open_location(path: &str) -> Result<(), String> {
     Err(format!("Failed to open location: error {}", rc.0 as isize))
 }
 
-fn menu_on(r: &egui::Response, add: impl FnOnce(&mut egui::Ui)) {
-    r.context_menu(|ui| {
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-        add(ui);
-    });
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{Config, MIN_WINDOW_SIZE};
+    use taut::testing::Trial;
 
-fn space_menu(
-    ui: &mut egui::Ui,
-    add: impl FnOnce(&mut egui::Ui) -> Option<Action>,
-) -> Option<Action> {
-    let mut out = None;
-    menu_on(&fill(ui), |ui| out = add(ui));
-    out
-}
-
-fn fill(ui: &mut egui::Ui) -> egui::Response {
-    ui.allocate_exact_size(
-        Vec2::new(ui.available_width(), ui.available_height().max(28.0)),
-        Sense::click(),
-    )
-    .1
-}
-
-fn item(ui: &mut egui::Ui, enabled: bool, label: &str) -> bool {
-    let clicked = ui.add_enabled(enabled, egui::Button::new(label)).clicked();
-    if clicked {
-        ui.close();
+    fn trial() -> Trial<InjectorApp> {
+        let mut app = InjectorApp::new(Config::default());
+        app.is_loading_processes = false;
+        app.processes = ["Alpha.exe", "Beta.exe", "Gamma.exe"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| ProcessInfo {
+                name: name.into(),
+                pid: index as u32 + 1,
+                exe: Default::default(),
+            })
+            .collect();
+        app.rebuild_process_rows();
+        Trial::new(app, |app, ui| {
+            ui.theme = theme();
+            show(ui, app);
+        })
     }
-    clicked
-}
 
-fn btn(ui: &mut egui::Ui, enabled: bool, label: &str, size: Vec2) -> bool {
-    ui.add_enabled(enabled, egui::Button::new(label).min_size(size))
-        .clicked()
-}
-
-fn row(ui: &mut egui::Ui) -> (Rect, egui::Response) {
-    let h = ui.spacing().interact_size.y.max(22.0);
-    ui.allocate_exact_size(Vec2::new(ui.available_width(), h), Sense::click())
-}
-
-fn in_row<R>(ui: &mut egui::Ui, rect: Rect, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
-        ui.set_clip_rect(ui.clip_rect().intersect(rect));
-        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), add)
-            .inner
-    })
-    .inner
-}
-
-fn row_bg(ui: &egui::Ui, rect: Rect, selected: bool, hot: bool) {
-    let fill = selected
-        .then(|| ui.visuals().selection.bg_fill)
-        .or_else(|| hot.then_some(Color32::from_rgba_unmultiplied(255, 255, 255, 10)));
-    if let Some(c) = fill {
-        ui.painter().rect_filled(rect, 4.0, c);
+    #[test]
+    fn search_accepts_keys_without_changing_selection() {
+        let mut window = trial();
+        window.press(Role::ListItem, "Alpha.exe (1)");
+        window.key("Ctrl+F");
+        window.fill("Filter by name…", "bEtA");
+        assert!(window.has(Role::ListItem, "Beta.exe (2)"));
+        assert!(!window.has(Role::ListItem, "Alpha.exe (1)"));
+        window.key("Enter");
+        assert_eq!(window.app.selected_process, Some(1));
+        assert_eq!(window.ui.focus(), 0);
+        window.key("Ctrl+F");
+        window.key("Escape");
+        assert!(window.app.process_search.is_empty());
+        assert!(window.has(Role::ListItem, "Alpha.exe (1)"));
     }
-}
 
-fn icon(ui: &mut egui::Ui, texture: Option<&TextureHandle>) {
-    match texture {
-        Some(t) => {
-            ui.add(egui::Image::new((t.id(), Vec2::splat(16.0))).sense(Sense::hover()));
+    #[test]
+    fn clear_filter_reveals_the_selected_row() {
+        let mut window = trial();
+        window.press(Role::ListItem, "Gamma.exe (3)");
+        window.fill("Filter by name…", "Alpha");
+        assert!(window.has(Role::Button, "Clear filter"));
+        assert!(!window.has(Role::ListItem, "Gamma.exe (3)"));
+        window.press(Role::Button, "Clear filter");
+        assert!(window.has(Role::ListItem, "Gamma.exe (3)"));
+        assert_eq!(window.app.selected_process, Some(3));
+        assert!(!window.has(Role::Button, "Clear filter"));
+    }
+
+    #[test]
+    fn dll_drop_uses_file_extension_and_canonical_identity() {
+        let dir = std::env::temp_dir().join(format!(
+            "fluffy-drop-test-{}-{}",
+            std::process::id(),
+            std::random::random::<u64>(..)
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let dll = dir.join("test.DLL");
+        let text = dir.join("test.txt");
+        std::fs::write(&dll, []).unwrap();
+        std::fs::write(&text, []).unwrap();
+
+        let mut window = trial();
+        window.drop_files(
+            taut::geom::pt(540.0, 145.0),
+            &[
+                dll.clone(),
+                text.clone(),
+                dir.join("missing.dll"),
+                dir.join(".").join("test.DLL"),
+            ],
+        );
+        let count = window.app.config.dlls.len();
+        let stored = window
+            .app
+            .config
+            .dlls
+            .first()
+            .map(|entry| Path::new(&entry.path));
+        std::fs::remove_file(&dll).unwrap();
+        std::fs::remove_file(text).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(stored, Some(dll.as_path()));
+    }
+
+    #[test]
+    fn process_order_is_stable_and_favorites_first() {
+        let mut window = trial();
+        for (favorites, expected) in [
+            (&[][..], [(0, false), (1, false), (2, false)]),
+            (&["GAMMA.EXE"][..], [(2, true), (0, false), (1, false)]),
+            (
+                &["gAmMa.exe", "beta.EXE"][..],
+                [(1, true), (2, true), (0, false)],
+            ),
+        ] {
+            window.app.config.favorites = favorites.iter().map(|name| (*name).into()).collect();
+            window.app.rebuild_process_rows();
+            assert_eq!(window.app.process_rows, expected, "{favorites:?}");
         }
-        None => {
-            ui.add(
-                egui::Label::new(RichText::new("·").color(Color32::DARK_GRAY))
-                    .selectable(false)
-                    .sense(Sense::hover()),
-            );
+    }
+
+    #[test]
+    fn selection_after_a_process_disappears_requires_a_unique_match() {
+        let mut window = trial();
+        let cases: [(&[(&str, u32)], Option<u32>, bool); 4] = [
+            (&[("Beta.exe", 1)], None, false),
+            (&[("ALPHA.EXE", 4)], Some(4), false),
+            (&[("Alpha.exe", 4), ("alpha.exe", 5)], None, true),
+            (&[("Alpha.exe", 1), ("Alpha.exe", 4)], Some(1), false),
+        ];
+        for (rows, expected, ambiguous) in cases {
+            window.app.selected_process = Some(1);
+            window.app.config.last_selected_app = Some("Alpha.exe".into());
+            window.app.processes = rows
+                .iter()
+                .map(|&(name, pid)| ProcessInfo {
+                    name: name.into(),
+                    pid,
+                    exe: Default::default(),
+                })
+                .collect();
+            window.app.resolve_selection();
+            assert_eq!(window.app.selected_process, expected, "{rows:?}");
+            assert_eq!(window.app.multiple_matches(), ambiguous, "{rows:?}");
+            assert_eq!(window.app.can_inject(), expected.is_some(), "{rows:?}");
+        }
+    }
+
+    #[test]
+    fn process_menus_update_visible_rows_and_escape_closes_them() {
+        let mut window = trial();
+        let beta = window.center_of(Role::ListItem, "Beta.exe (2)");
+        window.right_click(beta);
+        window.press(Role::MenuItem, "Favorite");
+        assert_eq!(window.app.process_rows[0], (1, true));
+
+        let beta = window.center_of(Role::ListItem, "Beta.exe (2)");
+        window.right_click(beta);
+        window.press(Role::MenuItem, "Unfavorite");
+        assert_eq!(window.app.process_rows[0], (0, false));
+
+        let beta = window.center_of(Role::ListItem, "Beta.exe (2)");
+        window.right_click(beta);
+        window.key("Escape");
+        assert!(!window.has(Role::MenuItem, "Block from list"));
+        window.right_click(beta);
+        window.press(Role::MenuItem, "Block from list");
+        assert!(!window.has(Role::ListItem, "Beta.exe (2)"));
+    }
+
+    #[test]
+    fn resizing_does_not_overwrite_a_dragged_split() {
+        let mut window = trial();
+        let from = window.center_of(Role::Slider, "Processes");
+        window.drag(from, taut::geom::pt(from.x + 50.0, from.y));
+        let dragged = window.app.config.split_ratio;
+        assert!(dragged > DEFAULT_SPLIT_RATIO + 0.05);
+        window.resize(MIN_WINDOW_SIZE[0], MIN_WINDOW_SIZE[1], 1.0);
+        assert_eq!(window.app.config.split_ratio, dragged);
+        assert!(window.has(Role::Button, "Add DLL"));
+        window.resize(680.0, 450.0, 1.0);
+        assert_eq!(window.app.config.split_ratio, dragged);
+    }
+
+    #[test]
+    fn list_rows_and_controls_keep_the_same_height_in_layout_units_at_high_dpi() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let mut window = trial();
+            window.resize(680.0, 450.0, scale);
+            let first = window.center_of(Role::ListItem, "Alpha.exe (1)");
+            let second = window.center_of(Role::ListItem, "Beta.exe (2)");
+            assert!((second.y - first.y - theme().control_height).abs() < 0.1);
+            assert!(window.has(Role::Button, "Add DLL"));
         }
     }
 }

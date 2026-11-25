@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use std::ffi::c_void;
-use std::io::ErrorKind;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, ErrorKind};
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use windows::core::{s, Owned};
@@ -27,57 +28,73 @@ pub(crate) fn inject_dll(
     dll_path: impl AsRef<Path>,
     copy_on_inject: bool,
     randomize_name: bool,
-) -> Result<()> {
+) -> (Result<()>, Option<String>) {
     let dll_path = dll_path.as_ref();
-    let copy = copy_on_inject
-        .then(|| create_injection_copy(process_id, dll_path, randomize_name))
-        .transpose()?;
-    inject_dll_path(process_id, copy.as_deref().unwrap_or(dll_path))
+    let mut owned_copy = None;
+    let mut load_may_be_pending = false;
+    let result = (|| {
+        if copy_on_inject {
+            create_injection_copy(process_id, dll_path, randomize_name, &mut owned_copy)?;
+        }
+        inject_dll_path(
+            process_id,
+            owned_copy.as_deref().unwrap_or(dll_path),
+            &mut load_may_be_pending,
+        )
+    })();
+    let cleanup_warning = owned_copy.and_then(|path| {
+        if load_may_be_pending {
+            return Some(format!(
+                "Kept temp DLL {} because loading may still be in progress.",
+                path.display()
+            ));
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => None,
+            Err(error) if error.kind() == ErrorKind::NotFound => None,
+            Err(error) => Some(format!(
+                "Could not remove temp DLL {}: {error}",
+                path.display()
+            )),
+        }
+    });
+    (result, cleanup_warning)
 }
 
-fn create_injection_copy(process_id: u32, source: &Path, randomize_name: bool) -> Result<PathBuf> {
+fn create_injection_copy(
+    process_id: u32,
+    source: &Path,
+    randomize_name: bool,
+    owned_copy: &mut Option<PathBuf>,
+) -> Result<()> {
     if !source.is_file() {
         bail!("DLL does not exist: {}", source.display());
     }
 
     let dir = std::env::temp_dir().join("fluffy-injector");
-    std::fs::create_dir_all(&dir).context("Failed to create temp DLL directory")?;
-    clean_copy_directory(&dir)?;
+    fs::create_dir_all(&dir).context("Failed to create temp DLL directory")?;
 
     let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or("dll");
     let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("dll");
-    let file_name = if randomize_name {
-        format!("{}.{}", random_file_stem(), ext)
+    let copy_stem = if randomize_name {
+        format!("{:032x}", std::random::random::<u128>(..))
     } else {
         let id = std::random::random::<u64>(..);
-        format!("{stem}-{process_id}-{id}.{ext}")
+        format!("{stem}-{process_id}-{id}")
     };
-    let dest = dir.join(file_name);
-    std::fs::copy(source, &dest).context("Failed to copy DLL for injection")?;
-    Ok(dest)
-}
-
-fn clean_copy_directory(directory: &Path) -> Result<()> {
-    for entry in std::fs::read_dir(directory).context("Failed to inspect temp DLL directory")? {
-        let path = entry.context("Failed to inspect temp DLL entry")?.path();
-        match std::fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    ErrorKind::NotFound | ErrorKind::PermissionDenied
-                ) => {}
-            Err(error) => return Err(error).context("Failed to clean temp DLL directory"),
-        }
-    }
+    let mut source = File::open(source).context("Failed to open original DLL")?;
+    let dest = dir.join(format!("{copy_stem}.{ext}"));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&dest)
+        .context("Failed to create temp DLL copy")?;
+    *owned_copy = Some(dest);
+    io::copy(&mut source, &mut file).context("Failed to copy DLL for injection")?;
     Ok(())
 }
 
-fn random_file_stem() -> String {
-    format!("{:032x}", std::random::random::<u128>(..))
-}
-
-fn inject_dll_path(process_id: u32, dll_path: &Path) -> Result<()> {
+fn inject_dll_path(process_id: u32, dll_path: &Path, load_may_be_pending: &mut bool) -> Result<()> {
     let process = RemoteProcess::open(process_id, ProcessAccess::custom(INJECTION_ACCESS))
         .context("Failed to open target process")?;
     if dll_already_mapped(&process, dll_path) {
@@ -86,7 +103,10 @@ fn inject_dll_path(process_id: u32, dll_path: &Path) -> Result<()> {
     let path_memory = write_dll_path(&process, dll_path)?;
     let load_library = remote_load_library_address(&process)?;
     let thread = create_load_library_thread(&process, load_library, path_memory.base())?;
-    wait_for_load(*thread, path_memory)?;
+    if let Err(error) = wait_for_load(*thread, path_memory) {
+        *load_may_be_pending = true;
+        return Err(error);
+    }
     ensure_load_succeeded(*thread)
 }
 

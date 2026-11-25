@@ -1,13 +1,14 @@
 use crate::app::BackgroundMessage;
 use crate::models::ProcessInfo;
-use eframe::egui::Context;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
+use taut::Waker;
 use windows::core::{Owned, PWSTR};
+use windows::Win32::Foundation::ERROR_NO_MORE_FILES;
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
@@ -20,53 +21,45 @@ const PATH_BUFFER_SIZE: usize = 32_768;
 
 #[derive(Default)]
 struct Scanner {
-    last_processes: Option<Vec<ProcessInfo>>,
-    last_error: Option<String>,
+    last: Option<Result<Vec<ProcessInfo>, String>>,
     path_cache: HashMap<u32, (String, PathBuf)>,
     path_buffer: Vec<u16>,
 }
 
 impl Scanner {
-    fn poll(&mut self) -> Option<BackgroundMessage> {
-        match scan_processes(&mut self.path_cache, &mut self.path_buffer) {
-            Ok(processes) => {
-                self.last_error = None;
-                changed(&mut self.last_processes, processes).map(BackgroundMessage::Processes)
-            }
-            Err(error) => {
-                let error = format!("Process scan failed: {error}");
-                changed(&mut self.last_error, error).map(BackgroundMessage::Error)
-            }
+    fn update(
+        &mut self,
+        result: windows::core::Result<Vec<ProcessInfo>>,
+    ) -> Option<BackgroundMessage> {
+        let next = result.map_err(|error| format!("Process scan failed: {error}"));
+        if self.last.as_ref() == Some(&next) {
+            return None;
         }
+        self.last = Some(next.clone());
+        Some(match next {
+            Ok(processes) => BackgroundMessage::Processes(processes),
+            Err(error) => BackgroundMessage::ScanError(error),
+        })
     }
 }
 
-fn changed<T: Clone + PartialEq>(last: &mut Option<T>, next: T) -> Option<T> {
-    (last.as_ref() != Some(&next)).then(|| {
-        *last = Some(next.clone());
-        next
-    })
-}
-
-pub(crate) fn scan_loop(tx: Sender<BackgroundMessage>, ctx: Context) {
+pub(crate) fn scan_loop(tx: Sender<BackgroundMessage>, stop: Receiver<()>) {
     let mut scanner = Scanner {
         path_buffer: vec![0; PATH_BUFFER_SIZE],
         ..Default::default()
     };
-    while publish_update(&mut scanner, &tx, &ctx) {
-        std::thread::sleep(SCAN_INTERVAL);
+    loop {
+        let result = scan_processes(&mut scanner.path_cache, &mut scanner.path_buffer);
+        if let Some(message) = scanner.update(result) {
+            if tx.send(message).is_err() {
+                break;
+            }
+            Waker.wake();
+        }
+        if stop.recv_timeout(SCAN_INTERVAL) != Err(RecvTimeoutError::Timeout) {
+            break;
+        }
     }
-}
-
-fn publish_update(scanner: &mut Scanner, tx: &Sender<BackgroundMessage>, ctx: &Context) -> bool {
-    let Some(message) = scanner.poll() else {
-        return true;
-    };
-    if tx.send(message).is_err() {
-        return false;
-    }
-    ctx.request_repaint();
-    true
 }
 
 pub(crate) fn pids_named(name: &str) -> windows::core::Result<Vec<u32>> {
@@ -117,8 +110,11 @@ fn for_each_process_entry(mut visit: impl FnMut(&PROCESSENTRY32W)) -> windows::c
     unsafe { Process32FirstW(*snapshot, &mut entry)? };
     loop {
         visit(&entry);
-        if unsafe { Process32NextW(*snapshot, &mut entry) }.is_err() {
-            return Ok(());
+        if let Err(error) = unsafe { Process32NextW(*snapshot, &mut entry) } {
+            if error.code() == ERROR_NO_MORE_FILES.to_hresult() {
+                return Ok(());
+            }
+            return Err(error);
         }
     }
 }
@@ -170,4 +166,40 @@ fn query_process_path(pid: u32, buffer: &mut [u16]) -> PathBuf {
     }
 
     PathBuf::from(OsString::from_wide(&buffer[..length as usize]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Foundation::ERROR_ACCESS_DENIED;
+
+    #[test]
+    fn scan_recovery_publishes_unchanged_rows_once() {
+        let mut scanner = Scanner::default();
+        let rows = vec![ProcessInfo {
+            name: "Game.exe".into(),
+            pid: 1,
+            exe: PathBuf::new(),
+        }];
+        let fail = || {
+            Err(windows::core::Error::from_hresult(
+                ERROR_ACCESS_DENIED.to_hresult(),
+            ))
+        };
+        assert!(matches!(
+            scanner.update(Ok(rows.clone())),
+            Some(BackgroundMessage::Processes(_))
+        ));
+        assert!(scanner.update(Ok(rows.clone())).is_none());
+        assert!(matches!(
+            scanner.update(fail()),
+            Some(BackgroundMessage::ScanError(_))
+        ));
+        assert!(scanner.update(fail()).is_none());
+        assert!(matches!(
+            scanner.update(Ok(rows.clone())),
+            Some(BackgroundMessage::Processes(recovered)) if recovered == rows
+        ));
+        assert!(scanner.update(Ok(rows)).is_none());
+    }
 }

@@ -1,9 +1,9 @@
-use crate::app::BackgroundMessage;
-use eframe::egui::{ColorImage, Context};
 use std::ffi::{c_void, OsStr};
 use std::os::windows::ffi::OsStrExt;
-use std::path::Path;
-use std::sync::mpsc::{Receiver, Sender};
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
+use taut::Waker;
 use windows::core::{Owned, PCWSTR};
 use windows::Win32::Graphics::Gdi::{GetDC, ReleaseDC};
 use windows::Win32::Graphics::Gdi::{
@@ -12,26 +12,44 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::Shell::ExtractIconExW;
 use windows::Win32::UI::WindowsAndMessaging::{GetIconInfo, HICON, ICONINFO};
 
-pub(crate) fn load_loop(
-    rx: Receiver<(u32, std::path::PathBuf)>,
-    tx: Sender<BackgroundMessage>,
-    ctx: Context,
-) {
-    while let Ok((pid, path)) = rx.recv() {
-        let Some(color_image) = load_exe_icon_data(&path) else {
-            continue;
-        };
-        if tx
-            .send(BackgroundMessage::Icon((pid, color_image)))
-            .is_err()
-        {
-            return;
-        }
-        ctx.request_repaint();
+pub(crate) enum IconRequest {
+    Dll,
+    Process(PathBuf),
+}
+
+pub(crate) type IconData = Option<(usize, Vec<u32>)>;
+
+pub(crate) struct Worker {
+    pub requests: Sender<IconRequest>,
+    pub results: Receiver<(IconRequest, IconData)>,
+}
+
+impl Worker {
+    pub(crate) fn spawn() -> Self {
+        let (requests, rx) = mpsc::channel();
+        let (tx, results) = mpsc::channel();
+        thread::spawn(move || load_loop(rx, tx));
+        Self { requests, results }
     }
 }
 
-fn load_exe_icon_data(exe_path: &Path) -> Option<ColorImage> {
+fn load_loop(rx: Receiver<IconRequest>, tx: Sender<(IconRequest, IconData)>) {
+    while let Ok(first) = rx.recv() {
+        // A startup batch needs one native wake, not one per picture.
+        for icon in std::iter::once(first).chain(rx.try_iter()).take(8) {
+            let data = match &icon {
+                IconRequest::Dll => taut::png::decode(include_bytes!("../../assets/dll_icon.png")),
+                IconRequest::Process(path) => load_exe_icon_data(path),
+            };
+            if tx.send((icon, data)).is_err() {
+                return;
+            }
+        }
+        Waker.wake();
+    }
+}
+
+fn load_exe_icon_data(exe_path: &Path) -> Option<(usize, Vec<u32>)> {
     let wide_path: Vec<u16> = OsStr::new(exe_path).encode_wide().chain(Some(0)).collect();
     let mut h_icon: HICON = HICON::default();
     let count =
@@ -39,28 +57,13 @@ fn load_exe_icon_data(exe_path: &Path) -> Option<ColorImage> {
     if count == 0 || h_icon.is_invalid() {
         return None;
     }
-    hicon_to_color_image(*unsafe { Owned::new(h_icon) })
-}
-
-fn hicon_to_color_image(hicon: HICON) -> Option<ColorImage> {
-    let color_bitmap = icon_color_bitmap(hicon)?;
-    let size = bitmap_size(*color_bitmap)?;
-    let mut buffer = read_bitmap(*color_bitmap, size)?;
-    for pixel in buffer.as_chunks_mut::<4>().0 {
-        pixel.swap(0, 2);
-    }
-    Some(ColorImage::from_rgba_unmultiplied(size, &buffer))
-}
-
-fn icon_color_bitmap(hicon: HICON) -> Option<Owned<HBITMAP>> {
+    let hicon = unsafe { Owned::new(h_icon) };
     let mut icon_info = ICONINFO::default();
-    if unsafe { GetIconInfo(hicon, &mut icon_info) }.is_err() {
-        return None;
-    }
+    unsafe { GetIconInfo(*hicon, &mut icon_info) }.ok()?;
     let color_bitmap = unsafe { Owned::new(icon_info.hbmColor) };
-    let mask_bitmap = unsafe { Owned::new(icon_info.hbmMask) };
-    drop(mask_bitmap);
-    Some(color_bitmap)
+    drop(unsafe { Owned::new(icon_info.hbmMask) });
+    let size = bitmap_size(*color_bitmap)?;
+    Some((size[0], read_bitmap(*color_bitmap, size)?))
 }
 
 fn bitmap_size(color_bitmap: HBITMAP) -> Option<[usize; 2]> {
@@ -81,28 +84,21 @@ fn bitmap_size(color_bitmap: HBITMAP) -> Option<[usize; 2]> {
     Some([width, height])
 }
 
-fn bitmap_info([width, height]: [usize; 2]) -> Option<BITMAPINFO> {
-    let width = i32::try_from(width).ok()?;
-    let height = i32::try_from(height).ok()?.checked_neg()?;
-    Some(BITMAPINFO {
+fn read_bitmap(color_bitmap: HBITMAP, [width, height]: [usize; 2]) -> Option<Vec<u32>> {
+    let mut info = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: width,
-            biHeight: height,
+            biWidth: i32::try_from(width).ok()?,
+            biHeight: -i32::try_from(height).ok()?,
             biPlanes: 1,
             biBitCount: 32,
             biCompression: 0,
             ..Default::default()
         },
         ..Default::default()
-    })
-}
-
-fn read_bitmap(color_bitmap: HBITMAP, size: [usize; 2]) -> Option<Vec<u8>> {
-    let [width, height] = size;
-    let byte_count = width.checked_mul(height)?.checked_mul(4)?;
-    let mut buffer = vec![0; byte_count];
-    let mut info = bitmap_info(size)?;
+    };
+    // On little-endian Windows, the DIB's BGRA bytes form 0xAARRGGBB words.
+    let mut buffer = vec![0u32; width.checked_mul(height)?];
     let rows = u32::try_from(height).ok()?;
     let hdc = unsafe { GetDC(None) };
     if hdc.is_invalid() {

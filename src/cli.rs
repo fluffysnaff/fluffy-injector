@@ -1,6 +1,7 @@
 use crate::core::{injector, process_scanner};
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
+use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
 
 const USAGE: &str = "\
 usage: fluffy_injector [options] <pid|process> <dll>...
@@ -10,7 +11,10 @@ usage: fluffy_injector [options] <pid|process> <dll>...
 
 pub(crate) fn run() -> Option<i32> {
     let mut args = std::env::args().skip(1);
-    Some(execute(args.next()?, args))
+    let first = args.next()?;
+    // A GUI-subsystem executable never allocates a console. CLI use can share the caller's.
+    let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+    Some(execute(first, args))
 }
 
 fn execute(first: String, rest: impl Iterator<Item = String>) -> i32 {
@@ -96,7 +100,11 @@ fn inject_one(pid: u32, label: &str, dll: &Path, copy: bool, random: bool) -> Re
     let path = dll
         .canonicalize()
         .with_context(|| format!("invalid DLL path: {}", dll.display()))?;
-    injector::inject_dll(pid, &path, copy, random)?;
+    let (result, cleanup_warning) = injector::inject_dll(pid, &path, copy, random);
+    if let Some(warning) = cleanup_warning {
+        eprintln!("warning: {warning}");
+    }
+    result?;
     println!("injected {} into {label} ({pid})", path.display());
     Ok(())
 }

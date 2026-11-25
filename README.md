@@ -75,7 +75,7 @@ Exit code `0` means every DLL is loaded. See the [command-line guide](docs/cli.m
 
 Found a bug or have an idea? [Open an issue](https://github.com/fluffysnaff/fluffy-injector/issues). Please open one before sending a pull request, so we can agree on the change first.
 
-Built with [eframe](https://crates.io/crates/eframe), [wraith-rs](https://crates.io/crates/wraith-rs), and [windows-rs](https://github.com/microsoft/windows-rs). Released under the [MIT License](LICENSE).
+Built with [taut](https://crates.io/crates/taut), [wraith-rs](https://crates.io/crates/wraith-rs), and [windows-rs](https://github.com/microsoft/windows-rs). Released under the [MIT License](LICENSE).
 
 <a href="https://www.star-history.com/#fluffysnaff/fluffy-injector&Date">
   <img src="https://api.star-history.com/svg?repos=fluffysnaff/fluffy-injector&type=Date" alt="Star history chart" width="600">
