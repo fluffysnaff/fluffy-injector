@@ -16,7 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: Run tests
+        run: cargo test
 
       - name: Build release
         run: cargo build --release

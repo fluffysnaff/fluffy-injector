@@ -11,6 +11,8 @@ rustup toolchain install nightly
 cargo +nightly build --release
 ```
 
+`+nightly` uses your installed nightly. GitHub Actions and plain `cargo` commands use the nightly version pinned in `rust-toolchain.toml`.
+
 The executable is `target\release\fluffy_injector.exe`.
 
 Run the tests with:
@@ -41,4 +43,4 @@ If `config.ron` cannot be read as valid settings, the app starts with defaults a
 
 ## Releases
 
-Every build uploads the `release-build` package. A new `version` in `Cargo.toml` on `main` also publishes a [GitHub Release](https://github.com/fluffysnaff/fluffy-injector/releases) with the portable executable and the setup program, which is compiled from `installer\fluffy-injector.iss` with Inno Setup 6.
+Every build runs the tests first, then uploads the `release-build` package. A new `version` in `Cargo.toml` on `main` also publishes a [GitHub Release](https://github.com/fluffysnaff/fluffy-injector/releases) with the portable executable and the setup program, which is compiled from `installer\fluffy-injector.iss` with Inno Setup 6.
