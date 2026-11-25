@@ -516,7 +516,8 @@ fn heading(ui: &mut Ui, label: &str) {
 
 fn icon(ui: &mut Ui, picture: Option<Picture>) {
     if let Some(picture) = picture {
-        ui.el().size(ICON_SIZE, ICON_SIZE).picture(picture).show();
+        // picture() resets the size to the image's own, so size() must follow it.
+        ui.el().picture(picture).size(ICON_SIZE, ICON_SIZE).show();
     } else {
         let color = ui.theme.text_faint;
         ui.row()
@@ -603,6 +604,18 @@ mod tests {
             ui.theme = theme();
             show(ui, app);
         })
+    }
+
+    #[test]
+    fn large_icon_is_scaled_and_leaves_room_for_the_label() {
+        let mut window = Trial::new(None, |picture, ui| {
+            let picture = *picture.get_or_insert_with(|| ui.add_picture(384, vec![0; 384 * 512]));
+            ui.row().open();
+            icon(ui, Some(picture));
+            ui.button("Label");
+            ui.close();
+        });
+        assert!(window.center_of(Role::Button, "Label").x < 100.0);
     }
 
     #[test]
