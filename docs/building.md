@@ -13,6 +13,12 @@ cargo +nightly build --release
 
 The executable is `target\release\fluffy_injector.exe`.
 
+Run the tests with:
+
+```powershell
+cargo +nightly test
+```
+
 ## Install with the script
 
 From a source checkout, build and install in one step:
@@ -26,6 +32,12 @@ Leave out `-Build` to install a binary you already built. The script installs to
 To uninstall, use **Apps & features** or run the script with `-Uninstall`.
 
 The portable `release-build` package from [GitHub Actions](https://github.com/fluffysnaff/fluffy-injector/actions/workflows/rust.yml) contains the same script next to the executable.
+
+## Settings
+
+The desktop app saves its settings in `%APPDATA%luffy-injector\config.ron`. If that file does not exist, the app imports the settings from version 0.4 or earlier, `%APPDATA%\Fluffy Injector\datapp.ron`, and leaves the old file unchanged.
+
+If `config.ron` cannot be read as valid settings, the app starts with defaults and does not save during that session. It leaves the file in place and copies it to `config.ron.bak`, unless a backup already exists. To start fresh, close the app and delete `config.ron`. If the old `app.ron` still exists, the app imports it again.
 
 ## Releases
 

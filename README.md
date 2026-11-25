@@ -29,13 +29,15 @@
 
 **Rebuild while your DLL is loaded.** Windows locks a loaded DLL, so your next build fails. Turn on **Copy on inject** and the target loads a temporary copy. Your original file stays free for the compiler.
 
-**Restart your target without starting over.** The process list refreshes about twice per second. When your program closes and opens again, Fluffy Injector selects the new process by name.
+**Restart your target without starting over.** The process list refreshes about twice per second. When your program closes and opens again, Fluffy Injector selects the new process by name. If several processes share that name, it asks you to choose.
 
-**Set it up once.** Your DLL list, checked items, favorites, last target, and window layout are saved. Favorites stay at the top. Processes you block stay out of the list.
+**Drop in your DLLs.** Drag files from Explorer into the DLL list. Press `Ctrl+O` to add a DLL or `Ctrl+F` to filter processes.
+
+**Set it up once.** Your DLL list, checked items, favorites, last target, and window layout are saved. Updating from 0.4 or earlier imports your old settings. Favorites stay at the top. Processes you block stay out of the list.
 
 **Know what happened.** Fluffy Injector waits for Windows to finish loading each DLL, then reports success or the error. A DLL that is already loaded is left alone.
 
-**Click or script.** One executable is both the desktop app and the command-line tool.
+**Click or script.** One executable under 2 MB is both the desktop app and the command-line tool. No console window opens with the app, and opening it twice shows the window you already have.
 
 ## Where it fits
 
@@ -49,7 +51,7 @@
    - `FluffyInjector-<version>-setup.exe` installs the app and adds the command to your PATH.
    - `fluffy_injector.exe` runs without installing.
 2. Select a process on the left.
-3. Select **Add DLL** and check the files you want.
+3. Drag your DLLs into the list, or select **Add DLL**. Check the files you want.
 4. Select **Inject**.
 
 Right-click a process to favorite or block it. To unblock one, right-click empty space in the process list and open **Blocked**. Right-click a DLL to inject it alone, open its folder, or remove it.
@@ -60,16 +62,16 @@ The setup program requires 64-bit Windows 10 or later. Fluffy Injector loads 64-
 
 ```powershell
 # Inject one DLL by process name
-fluffy_injector notepad.exe C:\hooks.dll
+fluffy_injector notepad.exe C:\hooks.dll | Out-Host
 
 # Keep the original file free for the next build
-fluffy_injector --copy notepad.exe C:\hooks.dll
+fluffy_injector --copy notepad.exe C:\hooks.dll | Out-Host
 
 # Inject several DLLs by process ID
-fluffy_injector 1234 C:\hooks.dll C:\overlay.dll
+fluffy_injector 1234 C:\hooks.dll C:\overlay.dll | Out-Host
 ```
 
-Exit code `0` means every DLL is loaded. See the [command-line guide](docs/cli.md) for all options and exit codes.
+`| Out-Host` makes PowerShell wait for the result. Exit code `0` means every DLL is loaded. See the [command-line guide](docs/cli.md) for all options and exit codes.
 
 ## Contribute
 
