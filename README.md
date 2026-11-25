@@ -75,6 +75,8 @@ fluffy_injector 1234 C:\hooks.dll C:\overlay.dll | Out-Host
 
 ## Contribute
 
+See the [changelog](CHANGELOG.md) for what changed in each version.
+
 Found a bug or have an idea? [Open an issue](https://github.com/fluffysnaff/fluffy-injector/issues). Please open one before sending a pull request, so we can agree on the change first.
 
 Built with [taut](https://crates.io/crates/taut), [wraith-rs](https://crates.io/crates/wraith-rs), and [windows-rs](https://github.com/microsoft/windows-rs). Released under the [MIT License](LICENSE).
